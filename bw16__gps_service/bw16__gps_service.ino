@@ -70,6 +70,7 @@ bool device_notify_flag = false;
 // Function for Alerting that a Characteristic has been Read
 void read_alert__callback(BLECharacteristic* device_char, uint8_t connection_id) {
   printf("[!] Read Alert::Characteristic %s read by connection %d\n", device_char->getUUID().str(), connection_id);
+  // Proof of read having happened
   device_char->writeString("Read Me");
 }
 
@@ -82,6 +83,12 @@ void notify_alert__callback(BLECharacteristic* device_char, uint8_t connection_i
     printf("[!] Notify Alert::Notifications disabled on Characteristic %s for connection %d\n", device_char->getUUID().str(), connection_id);
     device_notify_flag = false;
   }
+}
+
+// Function for Providing GPS Error Status
+void gps_error_status__callback(BLECharacteristic* device_char, uint8_t connection_id) {
+  printf("[!] GPS Error Status::Characteristic %s read by connection %d\n", device_char->getUUID().str(), connection_id);
+  //device_char->writeData8(systemErrors);
 }
 
 // Bluetooth SIG Standard UUIDs
@@ -128,16 +135,32 @@ void setup() {
     SerialPort.begin(GPSBaud);
     delay(1000);  // Give more time for initialization
 
-    // Initialize BLE first
+    // Initialize BLE with the device name directly
     BLE.init();
+    //BLE.init(device_complete_name);
     delay(100);
 
-    // Setup Advert Data
-    advert_data.addFlags();
-    advert_data.addCompleteName(device_complete_name);
-    advert_data.addShortName(device_short_name);
-    // Setup Scan Data
-    scan_data.addCompleteServices(0);    // Note: Blank entry indiciates that there are no services with a certain UUID length
+    // Set advertising parameters
+    BLE.configAdvert()->setMinInterval(100); // 100ms interval
+    //BLE.configAdvert()->setAdvTimeout(0);    // 0 = advertise forever
+
+    // Clear and reconfigure advertising data
+    advert_data.clear();
+    // Setup Advert Data with proper flags
+    //advert_data.addFlags(GAP_ADTYPE_FLAGS_LIMITED | GAP_ADTYPE_FLAGS_BREDR_NOT_SUPPORTED);
+    advert_data.addFlags(GAP_ADTYPE_FLAGS_GENERAL | GAP_ADTYPE_FLAGS_BREDR_NOT_SUPPORTED);
+    //advert_data.addCompleteName(device_complete_name);
+    //advert_data.addShortName(device_short_name);
+    // Directly setting the device name using lower level functions
+    BLE.setDeviceName(device_complete_name);
+    //BLE.setDeviceAppearance(BLE_APPEARANCE_GENERIC_LOCATION_NAVIGATION_DISPLAY);  // Optional
+    // Note: The above line should allow for masquerading as a different BLE device type
+
+    // Setup Scan Data with proper service advertising
+    scan_data.addCompleteServices(BLEUUID(LN_SERVICE_UUID));
+    scan_data.addCompleteServices(BLEUUID(DEVICE_INFO_SERVICE_UUID));
+    scan_data.addCompleteServices(BLEUUID(SYSTEM_STATUS_SERVICE_UUID));
+    //scan_data.addCompleteServices(0);    // Note: Blank entry indiciates that there are no services with a certain UUID length
     // Not sure what the above really means..... Needs some uint8_t, can NOT just be blank
 
     // Configure the Advert Datas into the BLE object
@@ -170,7 +193,7 @@ void setup() {
     errorStatusChar.setReadProperty(true);
     errorStatusChar.setNotifyProperty(true);
     errorStatusChar.setReadPermissions(GATT_PERM_READ);
-    errorStatusChar.setReadCallback(read_alert__callback);
+    errorStatusChar.setReadCallback(gps_error_status__callback);
     systemStatusService.addCharacteristic(errorStatusChar);
     delay(100);
 
