@@ -1,5 +1,7 @@
 // TinyGPS Includes
-#include <TinyGPSPlus.h>
+//#include <TinyGPSPlus.h>
+// Arduino GPS Includes
+#include <Adafruit_GPS.h>
 
 // BLE Includes
 #include <BLEDevice.h>
@@ -10,11 +12,24 @@
 
 // Software Serial Include
 #include <SoftwareSerial.h>
+//#include "Arduino.h"
+//#include "HardwareSerial.h"
+
+////
+// DEBUGGING VARIABLE
+////
+#define DEBUG__BLE_SERVER  false
+#define DEBUG__GPS_DATA    false
 
 // Configured from docs; url: https://www.amebaiot.com/en/amebad-bw16-arduino-getting-started/
 static const int RXPin = 5, TXPin = 4;
 static const uint32_t GPSBaud = 9600;
-SoftwareSerial SerialPort(RXPin, TXPin);
+//SoftwareSerial SerialPort(RXPin, TXPin);
+//HardwareSerial gpsSerial(TXPin, RXPin);    // Create hardware serial instance
+//HardwareSerial SerialPort(2); //(1);
+// Due to configuration of the BW-16 RealTek board, the following defition can occur
+SoftwareSerial gpsSerial(PB2, PB1); // RX, TX
+//RealTek_Serial SerialPort;
 // GPS data...
 double lat;
 double lng;
@@ -24,8 +39,14 @@ int year;
 int hour;
 int minute;
 int second;
+int millisecond;
 int alt;
-double acc;
+//double acc;
+int fix;
+double fixquality;
+int satellites;
+double speed;
+double angle;
 char timestamp_string[] = "%04d-%02d-%02d %02d:%02d:%02d";
 int bt_count = 0;
 char my_timestamp[23] = {0};
@@ -43,23 +64,78 @@ BLEAdvertData foundDevice;
 int dataCount = 0;
 
 // The TinyGPSPlus object
-TinyGPSPlus gps;
+//TinyGPSPlus gps;
+// The Adafruit_GPS object
+Adafruit_GPS gps(&gpsSerial);
+
+//// Configuration for GPS and GPS Data Structures
+
+// Set GPSECHO to 'false' to turn off echoing the GPS data to the Serial console
+// Set to 'true' if you want to debug and listen to the raw GPS sentences. 
+#if DEBUG__GPS_DATA
+#define GPSECHO  true
+#else
+#define GPSECHO  false
+#endif
 
 // Structure for GPS Data
-void dumpInfo() {
+void dumpInfo(Adafruit_GPS gps) {
 
-  lat = gps.location.lat();
-  lng = gps.location.lng();
-  alt = gps.altitude.meters();
-  month = gps.date.month();
-  day = gps.date.day();
-  year = gps.date.year();
-  hour = gps.time.hour();
-  minute = gps.time.minute();
-  second = gps.time.second();
-  acc = gps.hdop.hdop();
+  lat = gps.latitudeDegrees;
+  lng = gps.longitudeDegrees;
+  alt = gps.altitude;
+  month = gps.month;
+  day = gps.day;
+  year = gps.year;
+  hour = gps.hour;
+  minute = gps.minute;
+  second = gps.seconds;
+  millisecond = gps.milliseconds;
+  fix = gps.fix;
+  fixquality = gps.fixquality;
+  satellites = gps.satellites;
+  speed = gps.speed;
+  angle = gps.angle;
 
   return;
+}
+
+// Function for Printing GPS Time Data
+void print_gps_time() {
+    Serial.print("\nTime: ");
+    Serial.print(hour, DEC); Serial.print(':');
+    Serial.print(minute, DEC); Serial.print(':');
+    Serial.print(second, DEC); Serial.print('.');
+    Serial.println(millisecond);
+    Serial.print("Date: ");
+    Serial.print(day, DEC); Serial.print('/');
+    Serial.print(month, DEC); Serial.print("/20");
+    Serial.println(year, DEC);
+}
+
+// Function for Printing GPS Location Data
+void print_gps_location() {
+    Serial.print("Location: ");
+    Serial.print(gps.latitude, 4); Serial.print(gps.lat);
+    Serial.print(", "); 
+    Serial.print(gps.longitude, 4); Serial.println(gps.lon);
+    Serial.print("Location (in degrees, works with Google Maps): ");
+    Serial.print(lat, 4);
+    Serial.print(", "); 
+    Serial.println(lng, 4);
+} 
+
+// Function for Printing GPS Fix and Satellites Information
+void print_gps_fix() {
+    Serial.print("Fix: "); Serial.print((int)fix);
+    Serial.print(" quality: "); Serial.println((int)fixquality);   
+    Serial.print("Satellites: "); Serial.println((int)satellites);    
+}
+  
+// Function for Printing GPS Speed and Angle
+void print_gps_speed_angle() {
+    Serial.print("Angle: "); Serial.println(angle);
+    Serial.print("Altitude: "); Serial.println(alt);
 }
 
 //// BLE GATT Server Variables and Definitions
@@ -101,8 +177,15 @@ bool device_notify_flag = false;
 // Function for Alerting that a Characteristic has been Read
 void read_alert__callback(BLECharacteristic* device_char, uint8_t connection_id) {
   printf("[!] Read Alert::Characteristic %s read by connection %d\n", device_char->getUUID().str(), connection_id);
-  // Proof of read having happened
-  device_char->writeString("Read Me");
+  if (DEBUG__BLE_SERVER) {
+    // Proof of read having happened
+    device_char->writeString("Read Me");
+  }
+}
+
+// Functions for Alterting that a Characteristic has been Written to; NOTE: There is no write callback function for BLE...
+void write_alert__callback(BLECharacteristic* device_char, uint8_t connection_id) {
+  printf("[!] Write Alert::Characteristic %s written to by connection %d\n", device_char->getUUID().str(), connection_id);
 }
 
 // Function for Alerting on Change of Notification
@@ -161,9 +244,40 @@ BLEAdvertData scan_data;    // Structure skeleton for hodling BLE GATT Scan Resp
 //  - Note: Added several 100ms(?) delys that appear to fix issues with configuring the BLE GATT Server
 void setup() {
     Serial.begin(115200);
-    SerialPort.begin(GPSBaud);
-    delay(1000);  // Give more time for initialization
+    //SerialPort.begin(GPSBaud, SERIAL_8N1, RXPIN, TXPIN);
+    //delay(1000);  // Give more time for initialization
+    // Initialize UART for GPS with 8N1 configuration
+    //gps_uart = uart_init(TXPin, RXPin, GPSBaud);
+    //uart_config(gps_uart, GPSBaud, UART_8N1); // Configure the UART with 8N1 configuration
+    //delay(1000);
+    //Serial2.begin(GPSBaud);
+    //gpsSerial.begin(GPSBaud);
+    //SerialPort.begin(GPSBaud, SERIAL_8N1, RXPin, TXPin);
 
+    //// GPS Setup and Configuration
+    // Note: 9600 NMEA is the default baud rate for Adafruit MTK GPS's - some use 4800
+    gpsSerial.begin(GPSBaud);
+    delay(1000);
+    // uncomment this line to turn on RMC (recommended minimum) and GGA (fix data) including altitude
+    gps.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
+    // uncomment this line to turn on only the "minimum recommended" data
+    //GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCONLY);
+    // For parsing data, we don't suggest using anything but either RMC only or RMC+GGA since
+    // the parser doesn't care about other sentences at this time
+
+    // Set the update rate
+    gps.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);   // 1 Hz update rate
+    // For the parsing code to work nicely and have time to sort thru the data, and
+    // print it out we don't suggest using anything higher than 1 Hz
+
+    // Request updates on antenna status, comment out to keep quiet
+    gps.sendCommand(PGCMD_ANTENNA);
+
+    delay(1000);
+    // Ask for firmware version
+    gpsSerial.println(PMTK_Q_RELEASE);
+
+    //// BLE GATT Server Setup and Configuration
     // Initialize BLE with the device name directly
     BLE.init();
     //BLE.init(device_complete_name);
@@ -258,23 +372,74 @@ void setup() {
     BLE.beginPeripheral();
 }
 
+uint32_t timer = millis();
 void loop() {
-    // Check for GPS errors
-    if (millis() > 5000 && gps.charsProcessed() < 10) {
-        systemErrors |= ERROR_GPS_DISCONNECTED;
-        errorStatusChar.writeData8(systemErrors);  // Changed from writeValue
+    // Delay Wait to Have Polling be once a Second
+    delay(500);    // One second due to recommended 1Hz operation
+    //// GPS Interaction
+    // Char to hold data read from the GPS Serial
+    char c = gps.read();
+    // Debugging raw output
+    if (GPSECHO) {
+      if (c) {
+        Serial.print(c);
+      }
+    }
+    // if a sentence is received, we can check the checksum, parse it...
+    if (gps.newNMEAreceived()) {
+        // a tricky thing here is if we print the NMEA sentence, or data
+        // we end up not listening and catching other sentences! 
+        // so be very wary if using OUTPUT_ALLDATA and trytng to print out data
+        //Serial.println(GPS.lastNMEA());   // this also sets the newNMEAreceived() flag to false
+
+        // this also sets the newNMEAreceived() flag to false
+        if (!gps.parse(gps.lastNMEA())) {
+            // we can fail to parse a sentence in which case we should just wait for another
+            return;
+        }
     }
 
-    // Update GPS position if available
-    if (gps.location.isValid()) {
-        // Pack GPS data into characteristic
-        // Note: Using individual writes since BW16 doesn't support direct buffer writes
-        locationPositionChar.writeData32((uint32_t)lat);
-        locationPositionChar.writeData32((uint32_t)lng);
-    } else {
-        systemErrors |= ERROR_GPS_NO_FIX;
-        errorStatusChar.writeData8(systemErrors);  // Changed from writeValue
+    // if millis() or timer wraps around, we'll just reset it
+    if (timer > millis()) {
+        timer = millis();
     }
 
-    // ... rest of loop code ...
+    // Approximately every 2 seconds or so, print out the current state
+    if ((millis() - timer) > 2000) { 
+        timer = millis(); // reset the timer
+
+        // Parse the GPS Data; Note: Probably a better place to perform this action
+        if (c) {
+            dumpInfo(gps);
+        } else {
+            systemErrors |= ERROR_GPS_DISCONNECTED;
+            errorStatusChar.writeData8(systemErrors);  // Changed from writeValue
+            Serial.println("[-] GPS Disconnected - Lacking Complete Data");
+        }
+
+        // Print GPS Time Data
+        print_gps_time();
+
+        // Print Fix Information
+        print_gps_fix();
+        // GPS Data is Valid
+        if (gps.fix) {
+            // Print GPS Location Data
+            print_gps_location();
+
+            // Print GPS Speed and Angle Data
+            print_gps_speed_angle();
+
+            Serial.println("[+] GPS Fix Established");
+
+            // Pack GPS data into characteristic
+            // Note: Using individual writes since BW16 doesn't support direct buffer writes
+            locationPositionChar.writeData32((uint32_t)lat);
+            locationPositionChar.writeData32((uint32_t)lng);
+        } else {  // GPS Data is NOT Valid
+            systemErrors |= ERROR_GPS_NO_FIX;
+            errorStatusChar.writeData8(systemErrors);  // Changed from writeValue
+            Serial.println("[-] No GPS Fix");
+        }
+    }
 }
