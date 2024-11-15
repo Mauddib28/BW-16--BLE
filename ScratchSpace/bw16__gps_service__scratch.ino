@@ -27,20 +27,16 @@ int second;
 int alt;
 double acc;
 char timestamp_string[] = "%04d-%02d-%02d %02d:%02d:%02d";
-int bt_count = 0;
-char my_timestamp[23] = {0};
-int oled_mode = 0;
 
 // BLE Variables
-int scanTime = 5;  //In seconds
+//int scanTime = 5;  //In seconds
 //int scanTime_ms = 5000;   //In milliseconds
-int scanTime_ms = 2000;
-int pauseTime_ms = 2000;
+//int pauseTime_ms = 2000;
 //BLEScan *pBLEScan;
 // Variable for holding BLE Advert Data that is present within Callback Functions(???)
-BLEAdvertData foundDevice;
+//BLEAdvertData foundDevice;
 // Count of Devices Seen
-int dataCount = 0;
+//int dataCount = 0;
 
 // The TinyGPSPlus object
 TinyGPSPlus gps;
@@ -61,33 +57,6 @@ void dumpInfo() {
 
   return;
 }
-
-//// BLE GATT Server Variables and Definitions
-// Error tracking
-uint8_t systemErrors = 0x00;
-#define ERROR_GPS_DISCONNECTED 0x01
-#define ERROR_GPS_NO_FIX      0x02
-#define ERROR_LOW_MEMORY      0x04
-
-// Bluetooth Define Definitions
-#define BLE_APPEARANCE_GENERIC_LOCATION_NAVIGATION_DISPLAY 0x1419
-
-// Bluetooth SIG Standard UUIDs
-// Location and Navigation Service UUID: 0x1819
-#define LN_SERVICE_UUID "1819"
-// Location and Navigation Feature Characteristic UUID: 0x2A6A
-#define LN_FEATURE_CHAR_UUID "2A6A"
-// Location and Navigation Position Characteristic UUID: 0x2A67
-#define LN_POSITION_CHAR_UUID "2A67"
-
-// Device Information Service UUID: 0x180A
-#define DEVICE_INFO_SERVICE_UUID "180A"
-// Alert Status Characteristic UUID: 0x2A3F
-#define ALERT_STATUS_CHAR_UUID "2A3F"
-
-// Custom service for system status (using a random UUID)
-#define SYSTEM_STATUS_SERVICE_UUID "A7E6"
-#define ERROR_STATUS_CHAR_UUID "A7E7"
 
 //// BLE GATT Server Configuration and Setup
 // Complete Server Name
@@ -120,28 +89,21 @@ void notify_alert__callback(BLECharacteristic* device_char, uint8_t connection_i
 void gps_error_status__callback(BLECharacteristic* device_char, uint8_t connection_id) {
   printf("[!] GPS Error Status::Characteristic %s read by connection %d\n", device_char->getUUID().str(), connection_id);
   //device_char->writeData8(systemErrors);
-  // Define the Error Strings Array
-  const char* error_strings[] = {
-    "Nothing is Wrong",
-    "GPS Disconnected",
-    "GPS No Fix",
-    "Low Memory",
-    "Unknown GPS Error"
-  };
-  char error_buffer[20];
-  char serial_error_buffer[20];
-  sprintf(error_buffer, "%s", error_strings[systemErrors]);
-  // Write the Associated Error String to Error Bitmask into the Characteristic Buffer
-  device_char->writeString(error_buffer);
-  // Copy write of error string buffer to the serial line
-  Serial.print("System Error: ");
-  Serial.println(error_buffer);
-  // Write out to the serial line the exact system error bitmask
-  sprintf(serial_error_buffer, "Sys Err: [ %02X ]", systemErrors);
-  Serial.println(serial_error_buffer);
-  // Clear systemErrors variable
-  systemErrors = 0x00;
 }
+
+// Bluetooth Define Definitions
+#define BLE_APPEARANCE_GENERIC_LOCATION_NAVIGATION_DISPLAY 0x1419
+
+// Bluetooth SIG Standard UUIDs
+#define LN_SERVICE_UUID "1819"    // Location and Navigation Service UUID: 0x1819
+#define LN_FEATURE_CHAR_UUID "2A6A" // Location and Navigation Feature Characteristic UUID: 0x2A6A
+#define LN_POSITION_CHAR_UUID "2A67" // Location and Navigation Position Characteristic UUID: 0x2A67
+#define DEVICE_INFO_SERVICE_UUID "180A" // Device Information Service UUID: 0x180A
+#define ALERT_STATUS_CHAR_UUID "2A3F" // Alert Status Characteristic UUID: 0x2A3F
+#define ERROR_STATUS_CHAR_UUID "A7E7" // Error Status Characteristic UUID: 0xA7E7
+
+// Custom service for system status (using a random UUID)
+#define SYSTEM_STATUS_SERVICE_UUID "A7E6" // System Status Service UUID: 0xA7E6
 
 // GATT Server components
 BLEService locationService(LN_SERVICE_UUID);
@@ -153,70 +115,24 @@ BLECharacteristic locationPositionChar(LN_POSITION_CHAR_UUID);
 BLECharacteristic alertStatusChar(ALERT_STATUS_CHAR_UUID);
 BLECharacteristic errorStatusChar(ERROR_STATUS_CHAR_UUID);
 
+// Error tracking
+uint8_t systemErrors = 0x00;
+#define ERROR_GPS_DISCONNECTED 0x01
+#define ERROR_GPS_NO_FIX      0x02
+#define ERROR_LOW_MEMORY      0x04
+
 // Structures for Advertising the BLE GATT Server
 BLEAdvertData advert_data;  // Stucture skeleton for holding BLE GATT Server info; configured in init
 BLEAdvertData scan_data;    // Structure skeleton for hodling BLE GATT Scan Response?
 
-// Function for Setting Up the Device
-//  - Note: Added several 100ms(?) delys that appear to fix issues with configuring the BLE GATT Server
-void setup() {
-    Serial.begin(115200);
-    SerialPort.begin(GPSBaud);
-    delay(1000);  // Give more time for initialization
-
-    // Initialize BLE with the device name directly
-    BLE.init();
-    //BLE.init(device_complete_name);
-    delay(100);
-
-    // Set the Device Name earlier in the setup configuration
-    BLE.setDeviceName(device_complete_name);
-
-    // Set device name using RTL API directly
-    //le_set_gap_param(GAP_PARAM_DEVICE_NAME, strlen(device_complete_name), (void *)device_complete_name);
-    //le_set_gap_param(GAP_PARAM_APPEARANCE, sizeof(uint16_t), (void *)BLE_APPEARANCE_GENERIC_LOCATION_NAVIGATION_DISPLAY);
-    
-    // Set advertising parameters
-    //BLE.configAdvert()->setMinInterval(100); // 100ms interval
-    //BLE.configAdvert()->setAdvTimeout(0);    // 0 = advertise forever
-    //le_adv_set_param(GAP_PARAM_ADV_EVENT_TYPE, sizeof(uint8_t), (void *)GAP_ADTYPE_ADV_IND);
-    //le_adv_set_param(GAP_PARAM_ADV_DIRECT_ADDR_TYPE, sizeof(uint8_t), (void *)GAP_REMOTE_ADDR_LE_PUBLIC);
-    //le_adv_set_param(GAP_PARAM_ADV_INTERVAL_MIN, sizeof(uint16_t), (void *)100);
-    //le_adv_set_param(GAP_PARAM_ADV_INTERVAL_MAX, sizeof(uint16_t), (void *)100);
-
-    // Clear and reconfigure advertising data
-    advert_data.clear();
-    // Setup Advert Data with proper flags
-    //advert_data.addFlags(GAP_ADTYPE_FLAGS_LIMITED | GAP_ADTYPE_FLAGS_BREDR_NOT_SUPPORTED);
-    advert_data.addFlags(GAP_ADTYPE_FLAGS_GENERAL | GAP_ADTYPE_FLAGS_BREDR_NOT_SUPPORTED);
-    //advert_data.addCompleteName(device_complete_name);
-    //advert_data.addShortName(device_short_name);
-    // Directly setting the device name using lower level functions
-    //BLE.setDeviceName(device_complete_name);
-    //BLE.setDeviceAppearance(BLE_APPEARANCE_GENERIC_LOCATION_NAVIGATION_DISPLAY);  // Optional
-    // Note: The above line should allow for masquerading as a different BLE device type
-
-    // Setup Scan Data with proper service advertising
-    scan_data.addCompleteServices(BLEUUID(LN_SERVICE_UUID));
-    scan_data.addCompleteServices(BLEUUID(DEVICE_INFO_SERVICE_UUID));
-    scan_data.addCompleteServices(BLEUUID(SYSTEM_STATUS_SERVICE_UUID));
-    //scan_data.addCompleteServices(0);    // Note: Blank entry indiciates that there are no services with a certain UUID length
-    // Not sure what the above really means..... Needs some uint8_t, can NOT just be blank
-
-    // Configure the Advert Datas into the BLE object
-    BLE.configAdvert()->setAdvData(advert_data);
-    BLE.configAdvert()->setScanRspData(scan_data);
-    
-    // Configure BLE server before adding services
-    BLE.configServer(3);
-    delay(100);
-
-    // Configure characteristics after services are added
+// Combine related characteristics setup
+void setupLocationService() {
+    // Setup characteristics first
     locationFeatureChar.setReadProperty(true);
     locationFeatureChar.setReadPermissions(GATT_PERM_READ);
     locationFeatureChar.setReadCallback(read_alert__callback);
     delay(100);
-        
+    
     locationPositionChar.setReadProperty(true);
     locationPositionChar.setNotifyProperty(true);
     locationPositionChar.setReadPermissions(GATT_PERM_READ);
@@ -224,36 +140,75 @@ void setup() {
     locationPositionChar.setReadCallback(read_alert__callback);
     delay(100);
     
+    // Add characteristics to service
     locationService.addCharacteristic(locationFeatureChar);
     locationService.addCharacteristic(locationPositionChar);
-    // Note: One can use .setBufferLen() to set a specific buffer size
+    delay(100);
+}
+
+// Function for Setting Up the Device
+//  - Note: Added several 100ms(?) delys that appear to fix issues with configuring the BLE GATT Server
+void setup() {
+    Serial.begin(115200);
+    SerialPort.begin(GPSBaud);
+    delay(1000);
+
+    // Initialize BLE and immediately set name
+    BLE.init();
+    delay(100);
+    
+    // Force name setting through multiple methods
+    BLE.setDeviceName(device_complete_name);
+    //BLE.setDeviceShortName(device_short_name);
+
+    // Primary advert data
+    advert_data.clear();
+    advert_data.addFlags(GAP_ADTYPE_FLAGS_GENERAL | GAP_ADTYPE_FLAGS_BREDR_NOT_SUPPORTED);
+    advert_data.addShortName(device_short_name);
+    BLE.configAdvert()->setAdvData(advert_data);
     delay(100);
 
-    // Configure Error Reporting
-    errorStatusChar.setReadProperty(true);
-    errorStatusChar.setNotifyProperty(true);
-    errorStatusChar.setReadPermissions(GATT_PERM_READ);
-    errorStatusChar.setReadCallback(gps_error_status__callback);
-    systemStatusService.addCharacteristic(errorStatusChar);
+    // Scan response
+    scan_data.clear();
+    scan_data.addCompleteName(device_complete_name);
+    BLE.configAdvert()->setScanRspData(scan_data);
+    delay(100);
+    //scan_data.addCompleteServices(BLEUUID(LN_SERVICE_UUID));  // Note: This forces not revealing the rest of the services?
+
+    //BLE.configAdvert()->setAdvData(advert_data);
+    BLE.configAdvert()->setMinInterval(100);
+    BLE.configAdvert()->setMaxInterval(200);
+    //BLE.configAdvert()->setScanRspData(scan_data);
+    //BLE.configAdvert()->startAdv();
+    
+    // Debug print
+    Serial.print("Device name set to: ");
+    Serial.println(device_complete_name);
+    
+    //setupLocationService();
+    // Setup characteristics first
+    locationFeatureChar.setReadProperty(true);
+    locationFeatureChar.setReadPermissions(GATT_PERM_READ);
+    locationFeatureChar.setReadCallback(read_alert__callback);
+    delay(100);
+    
+    locationPositionChar.setReadProperty(true);
+    locationPositionChar.setNotifyProperty(true);
+    locationPositionChar.setReadPermissions(GATT_PERM_READ);
+    locationPositionChar.setCCCDCallback(notify_alert__callback);
+    locationPositionChar.setReadCallback(read_alert__callback);
+    delay(100);
+    
+    // Add characteristics to service
+    locationService.addCharacteristic(locationFeatureChar);
+    locationService.addCharacteristic(locationPositionChar);
     delay(100);
 
-    // Configure Alert Reporting
-    alertStatusChar.setReadProperty(true);
-    alertStatusChar.setNotifyProperty(true);
-    alertStatusChar.setReadPermissions(GATT_PERM_READ);
-    alertStatusChar.setCCCDCallback(notify_alert__callback);
-    alertStatusChar.setReadCallback(read_alert__callback);
-    deviceInfoService.addCharacteristic(alertStatusChar);
-    delay(100);
-
-    // Add services one by one with delays; May need to be at the end of the setup
+    // Add these lines:
     BLE.addService(locationService);
-    delay(100);
-    BLE.addService(deviceInfoService);
-    delay(100);
-    BLE.addService(systemStatusService);
-    delay(100);
 
+    BLE.configAdvert()->startAdv();
+    
     // Start peripheral mode last
     BLE.beginPeripheral();
 }
