@@ -33,20 +33,20 @@ SoftwareSerial gpsSerial(PB2, PB1); // RX, TX
 // GPS data...
 double lat;
 double lng;
-int month;
-int day;
-int year;
-int hour;
-int minute;
-int second;
-int millisecond;
+uint8_t month;
+uint8_t day;
+uint8_t year;
+uint8_t hour;
+uint8_t minute;
+uint8_t second;
+uint16_t millisecond;
 int alt;
 //double acc;
-int fix;
-double fixquality;
-int satellites;
-double speed;
-double angle;
+bool fix;
+uint8_t fixquality;
+uint8_t satellites;
+float speed;
+float angle;
 char timestamp_string[] = "%04d-%02d-%02d %02d:%02d:%02d";
 int bt_count = 0;
 char my_timestamp[23] = {0};
@@ -244,16 +244,7 @@ BLEAdvertData scan_data;    // Structure skeleton for hodling BLE GATT Scan Resp
 //  - Note: Added several 100ms(?) delys that appear to fix issues with configuring the BLE GATT Server
 void setup() {
     Serial.begin(115200);
-    //SerialPort.begin(GPSBaud, SERIAL_8N1, RXPIN, TXPIN);
-    //delay(1000);  // Give more time for initialization
-    // Initialize UART for GPS with 8N1 configuration
-    //gps_uart = uart_init(TXPin, RXPin, GPSBaud);
-    //uart_config(gps_uart, GPSBaud, UART_8N1); // Configure the UART with 8N1 configuration
-    //delay(1000);
-    //Serial2.begin(GPSBaud);
-    //gpsSerial.begin(GPSBaud);
-    //SerialPort.begin(GPSBaud, SERIAL_8N1, RXPin, TXPin);
-
+    
     //// GPS Setup and Configuration
     // Note: 9600 NMEA is the default baud rate for Adafruit MTK GPS's - some use 4800
     gpsSerial.begin(GPSBaud);
@@ -285,18 +276,6 @@ void setup() {
 
     // Set the Device Name earlier in the setup configuration
     BLE.setDeviceName(device_complete_name);
-
-    // Set device name using RTL API directly
-    //le_set_gap_param(GAP_PARAM_DEVICE_NAME, strlen(device_complete_name), (void *)device_complete_name);
-    //le_set_gap_param(GAP_PARAM_APPEARANCE, sizeof(uint16_t), (void *)BLE_APPEARANCE_GENERIC_LOCATION_NAVIGATION_DISPLAY);
-    
-    // Set advertising parameters
-    //BLE.configAdvert()->setMinInterval(100); // 100ms interval
-    //BLE.configAdvert()->setAdvTimeout(0);    // 0 = advertise forever
-    //le_adv_set_param(GAP_PARAM_ADV_EVENT_TYPE, sizeof(uint8_t), (void *)GAP_ADTYPE_ADV_IND);
-    //le_adv_set_param(GAP_PARAM_ADV_DIRECT_ADDR_TYPE, sizeof(uint8_t), (void *)GAP_REMOTE_ADDR_LE_PUBLIC);
-    //le_adv_set_param(GAP_PARAM_ADV_INTERVAL_MIN, sizeof(uint16_t), (void *)100);
-    //le_adv_set_param(GAP_PARAM_ADV_INTERVAL_MAX, sizeof(uint16_t), (void *)100);
 
     // Clear and reconfigure advertising data
     advert_data.clear();
@@ -375,7 +354,7 @@ void setup() {
 uint32_t timer = millis();
 void loop() {
     // Delay Wait to Have Polling be once a Second
-    delay(500);    // One second due to recommended 1Hz operation
+    delay(800);    // One second due to recommended 1Hz operation
     //// GPS Interaction
     // Char to hold data read from the GPS Serial
     char c = gps.read();
@@ -432,10 +411,11 @@ void loop() {
 
             Serial.println("[+] GPS Fix Established");
 
+            char gps_position_buffer[19];
+            sprintf(gps_position_buffer, "%d, %d", (uint32_t)lat, (uint32_t)lng);
             // Pack GPS data into characteristic
             // Note: Using individual writes since BW16 doesn't support direct buffer writes
-            locationPositionChar.writeData32((uint32_t)lat);
-            locationPositionChar.writeData32((uint32_t)lng);
+            locationPositionChar.writeString(gps_position_buffer);
         } else {  // GPS Data is NOT Valid
             systemErrors |= ERROR_GPS_NO_FIX;
             errorStatusChar.writeData8(systemErrors);  // Changed from writeValue
