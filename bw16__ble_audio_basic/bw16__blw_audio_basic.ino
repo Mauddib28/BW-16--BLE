@@ -240,6 +240,45 @@ public:
     }
 };
 
+// Standard Nordic UART UUIDs
+#define UART_TX_CHAR_UUID         "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+#define UART_RX_CHAR_UUID         "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+
+class UARTManager {
+private:
+    static constexpr size_t UART_BUFFER_SIZE = 512;
+    uint8_t txBuffer[UART_BUFFER_SIZE];
+    uint8_t rxBuffer[UART_BUFFER_SIZE];
+
+public:
+    bool setupUARTService(BLEClient* client) {
+        BLERemoteService* uartService = 
+            client->getService(BLEUUID(UART_SERVICE_UUID));
+        if (!uartService) return false;
+
+        BLERemoteCharacteristic* txChar = 
+            uartService->getCharacteristic(BLEUUID(UART_TX_CHAR_UUID));
+        BLERemoteCharacteristic* rxChar = 
+            uartService->getCharacteristic(BLEUUID(UART_RX_CHAR_UUID));
+
+        if (!txChar || !rxChar) return false;
+
+        // Set up notifications for received data
+        rxChar->registerForNotify([](BLERemoteCharacteristic* char, 
+                                   uint8_t* data, size_t length, 
+                                   bool isNotify) {
+            // Handle received data
+            handleReceivedData(data, length);
+        });
+
+        return true;
+    }
+
+    bool sendData(const uint8_t* data, size_t length) {
+        // Implementation for sending data through UART service
+    }
+};
+
 void setup() {
     Serial.begin(115200);
     centralManager = new BLECentralManager();
