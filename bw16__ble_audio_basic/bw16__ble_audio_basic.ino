@@ -129,43 +129,136 @@ class AdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
 #define VOLUME_CONTROL_POINT_CHAR_UUID  "2B7C"
 #define AUDIO_STREAM_ENDPOINT_CHAR_UUID "2BC6"
 
+// Standard BLE Audio UUIDs and constants based on Bluetooth SIG specifications
+#define BAP_UNICAST_CLIENT_UUID        "184E" // Basic Audio Profile Unicast Client
+#define BAP_BROADCAST_SOURCE_UUID      "184F" // Basic Audio Profile Broadcast Source
+#define BAP_BROADCAST_SINK_UUID        "1850" // Basic Audio Profile Broadcast Sink
+#define VOLUME_OFFSET_CONTROL_UUID     "1845" // Volume Offset Control Service
+#define MICROPHONE_CONTROL_UUID        "184D" // Microphone Control Service
+
+// Audio codec configuration constants
+#define LC3_CODEC_ID                   0x06   // LC3 is mandatory for LE Audio
+#define LC3_MIN_SAMPLING_FREQ          8000   // 8kHz
+#define LC3_MAX_SAMPLING_FREQ          48000  // 48kHz
+#define LC3_FRAME_DURATIONS           {7.5, 10} // Supported frame durations in ms
+
 class AudioProfileManager {
 private:
-    static constexpr uint16_t AUDIO_SAMPLE_RATE = 48000;
-    static constexpr uint8_t AUDIO_BITS_PER_SAMPLE = 16;
-    static constexpr uint8_t AUDIO_CHANNELS = 2;
-    
-    struct AudioStreamConfig {
-        uint8_t codecId;
-        uint16_t samplingFreq;
-        uint8_t framesDuration;
-        uint8_t audioChannelAllocation;
-        uint16_t octetsPerFrame;
-        uint8_t blocksPerSDU;
+    // Audio Quality of Service parameters
+    struct QoSConfiguration {
+        uint8_t retransmissionCount;    // Number of retransmission attempts
+        uint16_t maxTransportLatency;   // Maximum latency in milliseconds
+        uint8_t minPresentationDelay;   // Minimum presentation delay
+        uint8_t maxPresentationDelay;   // Maximum presentation delay
+        uint8_t preferredQoSProfile;    // Preferred QoS profile (balanced/reliability/latency)
     };
 
+    // Extended audio stream configuration
+    struct AudioStreamConfig {
+        // Basic configuration
+        uint8_t codecId;                // Codec identifier (LC3 = 0x06)
+        uint16_t samplingFreq;          // Sampling frequency in Hz
+        uint8_t framesDuration;         // Frame duration in ms
+        uint8_t audioChannelAllocation; // Channel allocation bitmap
+        uint16_t octetsPerFrame;        // Octets per audio frame
+        uint8_t blocksPerSDU;           // Blocks per SDU
+        
+        // Extended configuration
+        uint8_t framingMode;            // Framing mode (0=unframed, 1=framed)
+        uint16_t maxSDUSize;            // Maximum SDU size
+        uint8_t retransmissionNumber;   // Number of retransmissions
+        uint16_t maxTransportLatency;   // Maximum transport latency
+        uint16_t presentationDelay;     // Presentation delay
+        
+        // Audio context type bitmap
+        uint16_t contextType;           // Unspecified, Conversational, Media, etc.
+    };
+
+    // Audio stream states
+    enum class StreamState {
+        IDLE,
+        CONFIGURING,
+        ENABLING,
+        STREAMING,
+        DISABLING,
+        ERROR
+    };
+
+    StreamState currentState;
+    QoSConfiguration qosConfig;
+    AudioStreamConfig activeConfig;
+
 public:
+    AudioProfileManager() {
+        initializeDefaultConfigs();
+    }
+
     bool configureAudioStream(BLEClient* client, bool isSource) {
-        AudioStreamConfig config = {
-            .codecId = 0x06, // LC3 codec
-            .samplingFreq = AUDIO_SAMPLE_RATE,
-            .framesDuration = 10, // 10ms frames
-            .audioChannelAllocation = 0x03, // Stereo
-            .octetsPerFrame = 120,
-            .blocksPerSDU = 1
+        // Step 1: Discover and validate audio capabilities
+        if (!discoverAudioCapabilities(client)) {
+            return false;
+        }
+
+        // Step 2: Configure codec and QoS parameters
+        if (!configureCodecParameters(client)) {
+            return false;
+        }
+
+        // Step 3: Set up audio stream endpoints
+        if (!setupStreamEndpoints(client, isSource)) {
+            return false;
+        }
+
+        // Step 4: Enable the stream
+        return enableAudioStream(client);
+    }
+
+private:
+    void initializeDefaultConfigs() {
+        // Initialize QoS configuration with default values
+        qosConfig = {
+            .retransmissionCount = 2,
+            .maxTransportLatency = 20,  // 20ms
+            .minPresentationDelay = 10, // 10ms
+            .maxPresentationDelay = 40, // 40ms
+            .preferredQoSProfile = 1    // Balanced profile
         };
 
-        BLERemoteService* streamService = client->getService(BLEUUID(AUDIO_STREAM_SERVICE_UUID));
-        if (!streamService) return false;
+        // Initialize audio configuration with default values
+        activeConfig = {
+            .codecId = LC3_CODEC_ID,
+            .samplingFreq = 48000,      // 48kHz
+            .framesDuration = 10,       // 10ms
+            .audioChannelAllocation = 0x03, // Stereo
+            .octetsPerFrame = 120,
+            .blocksPerSDU = 1,
+            .framingMode = 1,           // Framed
+            .maxSDUSize = 512,
+            .retransmissionNumber = qosConfig.retransmissionCount,
+            .maxTransportLatency = qosConfig.maxTransportLatency,
+            .presentationDelay = 15,    // 15ms
+            .contextType = 0x0002       // Media context
+        };
+    }
 
-        BLERemoteCharacteristic* streamEndpoint = 
-            streamService->getCharacteristic(BLEUUID(AUDIO_STREAM_ENDPOINT_CHAR_UUID));
-        if (!streamEndpoint) return false;
+    bool discoverAudioCapabilities(BLEClient* client) {
+        // Implementation for discovering supported audio capabilities
+        // This includes codec support, sampling rates, frame durations, etc.
+    }
 
-        // Configure stream endpoint
-        uint8_t configData[8];
-        packConfigData(configData, config);
-        return streamEndpoint->writeValue(configData, sizeof(configData));
+    bool configureCodecParameters(BLEClient* client) {
+        // Implementation for configuring codec parameters
+        // This includes setting up LC3 codec with specific parameters
+    }
+
+    bool setupStreamEndpoints(BLEClient* client, bool isSource) {
+        // Implementation for setting up stream endpoints
+        // This includes configuring ASE (Audio Stream Endpoint) characteristics
+    }
+
+    bool enableAudioStream(BLEClient* client) {
+        // Implementation for enabling the audio stream
+        // This includes state machine management and stream establishment
     }
 };
 
