@@ -169,6 +169,48 @@ public:
     }
 };
 
+class SecurityManager {
+private:
+    static constexpr uint8_t MIN_ENCRYPTION_KEY_SIZE = 16;
+    
+public:
+    SecurityManager() {
+        // Initialize security settings
+        BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
+        BLEDevice::setSecurityCallbacks(new SecurityCallbacks());
+        
+        BLESecurity* security = new BLESecurity();
+        security->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
+        security->setCapability(ESP_IO_CAP_IO);
+        security->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | 
+                                     ESP_BLE_ID_KEY_MASK);
+    }
+};
+
+class SecurityCallbacks : public BLESecurityCallbacks {
+    uint32_t onPassKeyRequest() {
+        // Generate random passkey for MITM protection
+        uint32_t passkey = random(100000, 999999);
+        Serial.printf("PassKey: %06d\n", passkey);
+        return passkey;
+    }
+
+    void onAuthenticationComplete(esp_ble_auth_cmpl_t auth) {
+        if (auth.success) {
+            if (auth.key_present) {
+                // Device is now bonded
+                String bondedAddr = BLEAddress(auth.bd_addr).toString().c_str();
+                centralManager->updateDeviceBondStatus(bondedAddr, true);
+            }
+        }
+    }
+
+    bool onConfirmPIN(uint32_t pin) {
+        // Implement your PIN confirmation logic
+        return true; // or false based on user confirmation
+    }
+};
+
 void setup() {
     Serial.begin(115200);
     centralManager = new BLECentralManager();
