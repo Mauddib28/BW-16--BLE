@@ -211,6 +211,35 @@ class SecurityCallbacks : public BLESecurityCallbacks {
     }
 };
 
+class BLEErrorHandler {
+public:
+    enum class ErrorCode {
+        CONNECTION_FAILED,
+        SECURITY_FAILED,
+        SERVICE_NOT_FOUND,
+        CHARACTERISTIC_NOT_FOUND,
+        AUDIO_STREAM_ERROR,
+        MAX_CONNECTIONS_REACHED
+    };
+
+    static void handleError(ErrorCode code, const String& deviceAddress) {
+        switch (code) {
+            case ErrorCode::CONNECTION_FAILED:
+                Serial.printf("Connection failed for device: %s\n", deviceAddress.c_str());
+                // Implement reconnection logic or device blacklisting
+                break;
+            
+            case ErrorCode::SECURITY_FAILED:
+                Serial.printf("Security negotiation failed for device: %s\n", 
+                            deviceAddress.c_str());
+                // Clear bonding info and retry
+                break;
+            
+            // ... handle other error cases
+        }
+    }
+};
+
 void setup() {
     Serial.begin(115200);
     centralManager = new BLECentralManager();
