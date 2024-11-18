@@ -279,6 +279,56 @@ public:
     }
 };
 
+class ConnectionManager {
+private:
+    static constexpr uint8_t SCAN_INTERVAL_MS = 1349;
+    static constexpr uint8_t SCAN_WINDOW_MS = 449;
+    static constexpr uint8_t MAX_RETRY_COUNT = 3;
+
+    struct ConnectionStats {
+        uint32_t packetsReceived;
+        uint32_t packetsSent;
+        uint32_t errorCount;
+        uint32_t lastRSSI;
+        uint32_t connectionTime;
+    };
+    
+    std::map<String, ConnectionStats> connectionStats;
+
+public:
+    bool manageConnections() {
+        for (auto& device : connectedDevices) {
+            // Check connection health
+            if (!isConnectionHealthy(device.second)) {
+                handleUnhealthyConnection(&device.second);
+            }
+
+            // Update connection statistics
+            updateConnectionStats(device.first);
+        }
+
+        // Manage scanning for new devices if below MAX_CONNECTIONS
+        if (connectedDevices.size() < MAX_CONNECTIONS) {
+            startScanning();
+        }
+
+        return true;
+    }
+
+private:
+    bool isConnectionHealthy(const ConnectedDevice& device) {
+        // Implementation for connection health check
+    }
+
+    void handleUnhealthyConnection(ConnectedDevice* device) {
+        // Implementation for handling poor connections
+    }
+
+    void updateConnectionStats(const String& address) {
+        // Implementation for updating connection statistics
+    }
+};
+
 void setup() {
     Serial.begin(115200);
     centralManager = new BLECentralManager();
