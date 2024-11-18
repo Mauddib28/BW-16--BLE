@@ -265,42 +265,152 @@ private:
 class SecurityManager {
 private:
     static constexpr uint8_t MIN_ENCRYPTION_KEY_SIZE = 16;
+    static constexpr uint8_t MAX_ENCRYPTION_KEY_SIZE = 16;
     
+    enum class SecurityState {
+        IDLE,
+        PAIRING,
+        BONDING,
+        ENCRYPTED,
+        ERROR
+    };
+
+    struct SecurityKeys {
+        uint8_t irk[16];    // Identity Resolving Key
+        uint8_t csrk[16];   // Connection Signature Resolving Key
+        uint8_t ltk[16];    // Long Term Key
+    };
+
+    struct SecurityParameters {
+        bool bonding;
+        bool mitm;          // Man-in-the-middle protection
+        bool secureConnections;
+        uint8_t keySize;
+        uint8_t authReq;
+        uint8_t ioCap;      // IO Capabilities
+        uint8_t initKeyDist;
+        uint8_t respKeyDist;
+    };
+
 public:
     SecurityManager() {
-        // Initialize security settings
+        initializeSecurityParameters();
+        setupSecurityCallbacks();
+    }
+
+private:
+    void initializeSecurityParameters() {
+        // Initialize BLE security settings
         BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
-        BLEDevice::setSecurityCallbacks(new SecurityCallbacks());
         
+        // Configure security parameters
         BLESecurity* security = new BLESecurity();
+        
+        // Set authentication requirements
+        // ESP_LE_AUTH_REQ_SC_MITM_BOND includes:
+        // - Secure Connections (SC)
+        // - Man-in-the-Middle protection (MITM)
+        // - Bonding
         security->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
+        
+        // Set IO capabilities
+        // ESP_IO_CAP_IO indicates display and input capability
         security->setCapability(ESP_IO_CAP_IO);
-        security->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | 
-                                     ESP_BLE_ID_KEY_MASK);
+        
+        // Set key distribution
+        security->setInitEncryptionKey(
+            ESP_BLE_ENC_KEY_MASK |    // Encryption key
+            ESP_BLE_ID_KEY_MASK  |    // Identity key
+            ESP_BLE_CSR_KEY_MASK      // Signature key
+        );
+    }
+
+    void setupSecurityCallbacks() {
+        BLEDevice::setSecurityCallbacks(new ExtendedSecurityCallbacks());
     }
 };
 
-class SecurityCallbacks : public BLESecurityCallbacks {
+class ExtendedSecurityCallbacks : public BLESecurityCallbacks {
+private:
+    enum class PairingState {
+        NONE,
+        STARTED,
+        PASSKEY_DISPLAY,
+        PASSKEY_INPUT,
+        NUMERIC_COMPARISON,
+        COMPLETE,
+        FAILED
+    };
+
+    PairingState pairingState;
+    
+public:
     uint32_t onPassKeyRequest() {
-        // Generate random passkey for MITM protection
-        uint32_t passkey = random(100000, 999999);
-        Serial.printf("PassKey: %06d\n", passkey);
+        pairingState = PairingState::PASSKEY_INPUT;
+        
+        // Generate secure random passkey
+        uint32_t passkey = esp_random() % 1000000;
+        
+        // Format to ensure 6 digits
+        char formattedPasskey[7];
+        snprintf(formattedPasskey, sizeof(formattedPasskey), "%06d", passkey);
+        
+        Serial.printf("PassKey Request: %s\n", formattedPasskey);
         return passkey;
+    }
+
+    void onPassKeyNotify(uint32_t passkey) {
+        pairingState = PairingState::PASSKEY_DISPLAY;
+        Serial.printf("PassKey Notify: %06d\n", passkey);
+    }
+
+    bool onSecurityRequest() {
+        // Accept security request with high security requirements
+        return true;
     }
 
     void onAuthenticationComplete(esp_ble_auth_cmpl_t auth) {
         if (auth.success) {
             if (auth.key_present) {
-                // Device is now bonded
+                // Device successfully bonded
                 String bondedAddr = BLEAddress(auth.bd_addr).toString().c_str();
+                
+                // Store bonding information
+                storeBondingInformation(bondedAddr, auth);
+                
+                // Update device status
                 centralManager->updateDeviceBondStatus(bondedAddr, true);
+                
+                pairingState = PairingState::COMPLETE;
             }
+        } else {
+            pairingState = PairingState::FAILED;
+            // Handle authentication failure
+            handleAuthenticationFailure(auth);
         }
     }
 
     bool onConfirmPIN(uint32_t pin) {
-        // Implement your PIN confirmation logic
-        return true; // or false based on user confirmation
+        // Implement secure PIN confirmation logic
+        // This should include user interaction for MITM protection
+        return confirmPINWithUser(pin);
+    }
+
+private:
+    void storeBondingInformation(const String& address, const esp_ble_auth_cmpl_t& auth) {
+        // Implementation for storing bonding information
+        // This should be stored in non-volatile memory
+    }
+
+    void handleAuthenticationFailure(const esp_ble_auth_cmpl_t& auth) {
+        // Implementation for handling authentication failures
+        // This should include retry logic and user notification
+    }
+
+    bool confirmPINWithUser(uint32_t pin) {
+        // Implementation for user confirmation of PIN
+        // This should include secure user interface interaction
+        return true; // Placeholder
     }
 };
 
