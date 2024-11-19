@@ -1,5 +1,6 @@
+#include <AmebaBLE.h>
 #include <BLEDevice.h>
-#include <BLEServer.h>
+#include <BLEAdvertising.h>
 #include <BLEClient.h>
 #include <map>
 #include <vector>
@@ -9,6 +10,15 @@
 // Service UUIDs
 #define UART_SERVICE_UUID        "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define AUDIO_SERVICE_UUID       "1234A000-B5A3-F393-E0A9-E50E24DCCA9E" // Custom UUID
+
+// Standard BLE Audio UUIDs and constants based on Bluetooth SIG specifications
+#define BAP_UNICAST_CLIENT_UUID        "184E" // Basic Audio Profile Unicast Client
+#define BAP_BROADCAST_SOURCE_UUID      "184F" // Basic Audio Profile Broadcast Source
+#define BAP_BROADCAST_SINK_UUID        "1850" // Basic Audio Profile Broadcast Sink
+#define VOLUME_CONTROL_SERVICE_UUID     "1844"  // Volume Control Service
+#define VOLUME_STATE_CHAR_UUID          "2B7D"
+#define VOLUME_CONTROL_POINT_CHAR_UUID  "2B7C"
+#define AUDIO_STREAM_ENDPOINT_CHAR_UUID "2BC6"
 
 // Device tracking structures
 struct ConnectedDevice {
@@ -35,17 +45,19 @@ private:
 
 public:
     BLECentralManager() {
-        BLEDevice::init("BLE_Audio_Hub");
-        BLEDevice::setMTU(517); // Maximum MTU for audio streaming
+        BLE.init("BLE_Audio_Hub");
+        // Note: RTL8720DN automatically negotiates the optimal MTU
     }
 
     bool startScanning() {
-        BLEScan* scan = BLEDevice::getScan();
-        scan->setAdvertisedDeviceCallbacks(new AdvertisedDeviceCallbacks());
-        scan->setInterval(1349);
-        scan->setWindow(449);
-        scan->setActiveScan(true);
-        return scan->start(5, scanCompleteCB, false);
+        BLE.configScan()->setInterval(1349);
+        BLE.configScan()->setWindow(449);
+        BLE.configScan()->setActiveScan(true);
+        
+        // Set scan callback
+        BLE.configScan()->setScanCallback(new AdvertisedDeviceCallbacks());
+        
+        return BLE.startScan(5000); // Scan for 5 seconds
     }
 
     void handleNewConnection(BLEAdvertisedDevice* device) {
@@ -55,8 +67,8 @@ public:
         newDevice.connectionId = connectedDevices.size() + 1;
         
         // Attempt connection
-        BLEClient* client = BLEDevice::createClient();
-        if (client->connect(device)) {
+        BLEClient* client = BLE.central();
+        if (client->connect(device->getAddress())) {
             newDevice.client = client;
             
             // Determine device capabilities and security level
@@ -73,7 +85,6 @@ private:
         BLERemoteService* audioService = device->client->getService(BLEUUID(AUDIO_SERVICE_UUID));
         if (audioService != nullptr) {
             // Determine if device is source/sink based on characteristics
-            // This is simplified - real implementation would need proper audio profile handling
             device->isAudioSource = true; // or false based on characteristics
             device->isAudioSink = !device->isAudioSource;
         }
@@ -88,59 +99,7 @@ private:
             publicDevices.push_back(device);
         }
     }
-
-    bool connectAudioDevices(String sourceAddr, String sinkAddr) {
-        auto source = connectedDevices.find(sourceAddr);
-        auto sink = connectedDevices.find(sinkAddr);
-        
-        if (source == connectedDevices.end() || sink == connectedDevices.end()) {
-            return false;
-        }
-        
-        if (!source->second.isAudioSource || !sink->second.isAudioSink) {
-            return false;
-        }
-        
-        activeAudioSource = &source->second;
-        activeAudioSink = &sink->second;
-        
-        // Implement audio routing logic here
-        return true;
-    }
 };
-
-// Global manager instance
-BLECentralManager* centralManager = nullptr;
-
-// Callback class for handling device discovery
-class AdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
-    void onResult(BLEAdvertisedDevice advertisedDevice) {
-        if (advertisedDevice.haveServiceUUID()) {
-            centralManager->handleNewConnection(&advertisedDevice);
-        }
-    }
-};
-
-// Standard BLE Audio UUIDs from Bluetooth SIG
-#define AUDIO_CONTROL_SERVICE_UUID      "1848"  // Basic Audio Profile Control Service
-#define AUDIO_STREAM_SERVICE_UUID       "1849"  // Basic Audio Profile Stream Service
-#define VOLUME_CONTROL_SERVICE_UUID     "1844"  // Volume Control Service
-#define VOLUME_STATE_CHAR_UUID          "2B7D"
-#define VOLUME_CONTROL_POINT_CHAR_UUID  "2B7C"
-#define AUDIO_STREAM_ENDPOINT_CHAR_UUID "2BC6"
-
-// Standard BLE Audio UUIDs and constants based on Bluetooth SIG specifications
-#define BAP_UNICAST_CLIENT_UUID        "184E" // Basic Audio Profile Unicast Client
-#define BAP_BROADCAST_SOURCE_UUID      "184F" // Basic Audio Profile Broadcast Source
-#define BAP_BROADCAST_SINK_UUID        "1850" // Basic Audio Profile Broadcast Sink
-#define VOLUME_OFFSET_CONTROL_UUID     "1845" // Volume Offset Control Service
-#define MICROPHONE_CONTROL_UUID        "184D" // Microphone Control Service
-
-// Audio codec configuration constants
-#define LC3_CODEC_ID                   0x06   // LC3 is mandatory for LE Audio
-#define LC3_MIN_SAMPLING_FREQ          8000   // 8kHz
-#define LC3_MAX_SAMPLING_FREQ          48000  // 48kHz
-#define LC3_FRAME_DURATIONS           {7.5, 10} // Supported frame durations in ms
 
 class AudioProfileManager {
 private:
@@ -155,26 +114,20 @@ private:
 
     // Extended audio stream configuration
     struct AudioStreamConfig {
-        // Basic configuration
         uint8_t codecId;                // Codec identifier (LC3 = 0x06)
         uint16_t samplingFreq;          // Sampling frequency in Hz
         uint8_t framesDuration;         // Frame duration in ms
         uint8_t audioChannelAllocation; // Channel allocation bitmap
         uint16_t octetsPerFrame;        // Octets per audio frame
         uint8_t blocksPerSDU;           // Blocks per SDU
-        
-        // Extended configuration
         uint8_t framingMode;            // Framing mode (0=unframed, 1=framed)
         uint16_t maxSDUSize;            // Maximum SDU size
         uint8_t retransmissionNumber;   // Number of retransmissions
         uint16_t maxTransportLatency;   // Maximum transport latency
         uint16_t presentationDelay;     // Presentation delay
-        
-        // Audio context type bitmap
-        uint16_t contextType;           // Unspecified, Conversational, Media, etc.
+        uint16_t contextType;           // Audio context type bitmap
     };
 
-    // Audio stream states
     enum class StreamState {
         IDLE,
         CONFIGURING,
@@ -187,6 +140,8 @@ private:
     StreamState currentState;
     QoSConfiguration qosConfig;
     AudioStreamConfig activeConfig;
+    BLERemoteCharacteristic* streamEndpoint;
+    BLERemoteCharacteristic* volumeControl;
 
 public:
     AudioProfileManager() {
@@ -194,351 +149,147 @@ public:
     }
 
     bool configureAudioStream(BLEClient* client, bool isSource) {
-        // Step 1: Discover and validate audio capabilities
-        if (!discoverAudioCapabilities(client)) {
+        if (!client->connected()) {
             return false;
         }
 
-        // Step 2: Configure codec and QoS parameters
-        if (!configureCodecParameters(client)) {
+        // Discover audio services
+        BLERemoteService* audioService = client->getService(BLEUUID(AUDIO_SERVICE_UUID));
+        if (!audioService) {
+            Serial.println("Audio service not found");
             return false;
         }
 
-        // Step 3: Set up audio stream endpoints
-        if (!setupStreamEndpoints(client, isSource)) {
+        // Get stream endpoint characteristic
+        streamEndpoint = audioService->getCharacteristic(BLEUUID(AUDIO_STREAM_ENDPOINT_CHAR_UUID));
+        if (!streamEndpoint) {
+            Serial.println("Stream endpoint not found");
             return false;
         }
 
-        // Step 4: Enable the stream
-        return enableAudioStream(client);
+        // Configure stream based on role (source/sink)
+        if (!configureStreamEndpoint(isSource)) {
+            return false;
+        }
+
+        // Set up volume control if available
+        setupVolumeControl(client);
+
+        currentState = StreamState::CONFIGURED;
+        return true;
+    }
+
+    bool startStreaming() {
+        if (currentState != StreamState::CONFIGURED) {
+            return false;
+        }
+
+        // Send stream start command
+        uint8_t startCmd[] = {0x01}; // Example start command
+        if (!streamEndpoint->writeValue(startCmd, sizeof(startCmd))) {
+            return false;
+        }
+
+        currentState = StreamState::STREAMING;
+        return true;
+    }
+
+    bool stopStreaming() {
+        if (currentState != StreamState::STREAMING) {
+            return false;
+        }
+
+        // Send stream stop command
+        uint8_t stopCmd[] = {0x00}; // Example stop command
+        if (!streamEndpoint->writeValue(stopCmd, sizeof(stopCmd))) {
+            return false;
+        }
+
+        currentState = StreamState::CONFIGURED;
+        return true;
     }
 
 private:
     void initializeDefaultConfigs() {
-        // Initialize QoS configuration with default values
         qosConfig = {
             .retransmissionCount = 2,
-            .maxTransportLatency = 20,  // 20ms
-            .minPresentationDelay = 10, // 10ms
-            .maxPresentationDelay = 40, // 40ms
-            .preferredQoSProfile = 1    // Balanced profile
+            .maxTransportLatency = 20,
+            .minPresentationDelay = 10,
+            .maxPresentationDelay = 40,
+            .preferredQoSProfile = 1
         };
 
-        // Initialize audio configuration with default values
         activeConfig = {
-            .codecId = LC3_CODEC_ID,
-            .samplingFreq = 48000,      // 48kHz
-            .framesDuration = 10,       // 10ms
+            .codecId = 0x06, // LC3 codec
+            .samplingFreq = 48000,
+            .framesDuration = 10,
             .audioChannelAllocation = 0x03, // Stereo
             .octetsPerFrame = 120,
             .blocksPerSDU = 1,
-            .framingMode = 1,           // Framed
+            .framingMode = 1,
             .maxSDUSize = 512,
             .retransmissionNumber = qosConfig.retransmissionCount,
             .maxTransportLatency = qosConfig.maxTransportLatency,
-            .presentationDelay = 15,    // 15ms
-            .contextType = 0x0002       // Media context
+            .presentationDelay = 15,
+            .contextType = 0x0002
         };
+
+        currentState = StreamState::IDLE;
     }
 
-    bool discoverAudioCapabilities(BLEClient* client) {
-        // Implementation for discovering supported audio capabilities
-        // This includes codec support, sampling rates, frame durations, etc.
-    }
-
-    bool configureCodecParameters(BLEClient* client) {
-        // Implementation for configuring codec parameters
-        // This includes setting up LC3 codec with specific parameters
-    }
-
-    bool setupStreamEndpoints(BLEClient* client, bool isSource) {
-        // Implementation for setting up stream endpoints
-        // This includes configuring ASE (Audio Stream Endpoint) characteristics
-    }
-
-    bool enableAudioStream(BLEClient* client) {
-        // Implementation for enabling the audio stream
-        // This includes state machine management and stream establishment
-    }
-};
-
-class SecurityManager {
-private:
-    static constexpr uint8_t MIN_ENCRYPTION_KEY_SIZE = 16;
-    static constexpr uint8_t MAX_ENCRYPTION_KEY_SIZE = 16;
-    
-    enum class SecurityState {
-        IDLE,
-        PAIRING,
-        BONDING,
-        ENCRYPTED,
-        ERROR
-    };
-
-    struct SecurityKeys {
-        uint8_t irk[16];    // Identity Resolving Key
-        uint8_t csrk[16];   // Connection Signature Resolving Key
-        uint8_t ltk[16];    // Long Term Key
-    };
-
-    struct SecurityParameters {
-        bool bonding;
-        bool mitm;          // Man-in-the-middle protection
-        bool secureConnections;
-        uint8_t keySize;
-        uint8_t authReq;
-        uint8_t ioCap;      // IO Capabilities
-        uint8_t initKeyDist;
-        uint8_t respKeyDist;
-    };
-
-public:
-    SecurityManager() {
-        initializeSecurityParameters();
-        setupSecurityCallbacks();
-    }
-
-private:
-    void initializeSecurityParameters() {
-        // Initialize BLE security settings
-        BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
+    bool configureStreamEndpoint(bool isSource) {
+        // Pack configuration into byte array
+        uint8_t config[20];
+        memcpy(config, &activeConfig, sizeof(activeConfig));
         
-        // Configure security parameters
-        BLESecurity* security = new BLESecurity();
-        
-        // Set authentication requirements
-        // ESP_LE_AUTH_REQ_SC_MITM_BOND includes:
-        // - Secure Connections (SC)
-        // - Man-in-the-Middle protection (MITM)
-        // - Bonding
-        security->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
-        
-        // Set IO capabilities
-        // ESP_IO_CAP_IO indicates display and input capability
-        security->setCapability(ESP_IO_CAP_IO);
-        
-        // Set key distribution
-        security->setInitEncryptionKey(
-            ESP_BLE_ENC_KEY_MASK |    // Encryption key
-            ESP_BLE_ID_KEY_MASK  |    // Identity key
-            ESP_BLE_CSR_KEY_MASK      // Signature key
-        );
+        // Write configuration to stream endpoint
+        return streamEndpoint->writeValue(config, sizeof(config));
     }
 
-    void setupSecurityCallbacks() {
-        BLEDevice::setSecurityCallbacks(new ExtendedSecurityCallbacks());
-    }
-};
-
-class ExtendedSecurityCallbacks : public BLESecurityCallbacks {
-private:
-    enum class PairingState {
-        NONE,
-        STARTED,
-        PASSKEY_DISPLAY,
-        PASSKEY_INPUT,
-        NUMERIC_COMPARISON,
-        COMPLETE,
-        FAILED
-    };
-
-    PairingState pairingState;
-    
-public:
-    uint32_t onPassKeyRequest() {
-        pairingState = PairingState::PASSKEY_INPUT;
-        
-        // Generate secure random passkey
-        uint32_t passkey = esp_random() % 1000000;
-        
-        // Format to ensure 6 digits
-        char formattedPasskey[7];
-        snprintf(formattedPasskey, sizeof(formattedPasskey), "%06d", passkey);
-        
-        Serial.printf("PassKey Request: %s\n", formattedPasskey);
-        return passkey;
-    }
-
-    void onPassKeyNotify(uint32_t passkey) {
-        pairingState = PairingState::PASSKEY_DISPLAY;
-        Serial.printf("PassKey Notify: %06d\n", passkey);
-    }
-
-    bool onSecurityRequest() {
-        // Accept security request with high security requirements
-        return true;
-    }
-
-    void onAuthenticationComplete(esp_ble_auth_cmpl_t auth) {
-        if (auth.success) {
-            if (auth.key_present) {
-                // Device successfully bonded
-                String bondedAddr = BLEAddress(auth.bd_addr).toString().c_str();
-                
-                // Store bonding information
-                storeBondingInformation(bondedAddr, auth);
-                
-                // Update device status
-                centralManager->updateDeviceBondStatus(bondedAddr, true);
-                
-                pairingState = PairingState::COMPLETE;
+    void setupVolumeControl(BLEClient* client) {
+        BLERemoteService* volService = client->getService(BLEUUID(VOLUME_CONTROL_SERVICE_UUID));
+        if (volService) {
+            volumeControl = volService->getCharacteristic(BLEUUID(VOLUME_CONTROL_POINT_CHAR_UUID));
+            if (volumeControl) {
+                // Set up volume control notifications
+                volumeControl->setNotifyCallback(new VolumeControlCallback());
+                volumeControl->enableNotify();
             }
-        } else {
-            pairingState = PairingState::FAILED;
-            // Handle authentication failure
-            handleAuthenticationFailure(auth);
-        }
-    }
-
-    bool onConfirmPIN(uint32_t pin) {
-        // Implement secure PIN confirmation logic
-        // This should include user interaction for MITM protection
-        return confirmPINWithUser(pin);
-    }
-
-private:
-    void storeBondingInformation(const String& address, const esp_ble_auth_cmpl_t& auth) {
-        // Implementation for storing bonding information
-        // This should be stored in non-volatile memory
-    }
-
-    void handleAuthenticationFailure(const esp_ble_auth_cmpl_t& auth) {
-        // Implementation for handling authentication failures
-        // This should include retry logic and user notification
-    }
-
-    bool confirmPINWithUser(uint32_t pin) {
-        // Implementation for user confirmation of PIN
-        // This should include secure user interface interaction
-        return true; // Placeholder
-    }
-};
-
-class BLEErrorHandler {
-public:
-    enum class ErrorCode {
-        CONNECTION_FAILED,
-        SECURITY_FAILED,
-        SERVICE_NOT_FOUND,
-        CHARACTERISTIC_NOT_FOUND,
-        AUDIO_STREAM_ERROR,
-        MAX_CONNECTIONS_REACHED
-    };
-
-    static void handleError(ErrorCode code, const String& deviceAddress) {
-        switch (code) {
-            case ErrorCode::CONNECTION_FAILED:
-                Serial.printf("Connection failed for device: %s\n", deviceAddress.c_str());
-                // Implement reconnection logic or device blacklisting
-                break;
-            
-            case ErrorCode::SECURITY_FAILED:
-                Serial.printf("Security negotiation failed for device: %s\n", 
-                            deviceAddress.c_str());
-                // Clear bonding info and retry
-                break;
-            
-            // ... handle other error cases
         }
     }
 };
 
-// Standard Nordic UART UUIDs
-#define UART_TX_CHAR_UUID         "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
-#define UART_RX_CHAR_UUID         "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
-
-class UARTManager {
-private:
-    static constexpr size_t UART_BUFFER_SIZE = 512;
-    uint8_t txBuffer[UART_BUFFER_SIZE];
-    uint8_t rxBuffer[UART_BUFFER_SIZE];
-
-public:
-    bool setupUARTService(BLEClient* client) {
-        BLERemoteService* uartService = 
-            client->getService(BLEUUID(UART_SERVICE_UUID));
-        if (!uartService) return false;
-
-        BLERemoteCharacteristic* txChar = 
-            uartService->getCharacteristic(BLEUUID(UART_TX_CHAR_UUID));
-        BLERemoteCharacteristic* rxChar = 
-            uartService->getCharacteristic(BLEUUID(UART_RX_CHAR_UUID));
-
-        if (!txChar || !rxChar) return false;
-
-        // Set up notifications for received data
-        rxChar->registerForNotify([](BLERemoteCharacteristic* char, 
-                                   uint8_t* data, size_t length, 
-                                   bool isNotify) {
-            // Handle received data
-            handleReceivedData(data, length);
-        });
-
-        return true;
-    }
-
-    bool sendData(const uint8_t* data, size_t length) {
-        // Implementation for sending data through UART service
+// Volume control notification callback
+class VolumeControlCallback : public BLECharacteristicCallbacks {
+    void onNotify(BLECharacteristic* characteristic) {
+        uint8_t* value = characteristic->getValue();
+        uint8_t length = characteristic->getLength();
+        
+        if (length > 0) {
+            // Handle volume control updates
+            uint8_t volume = value[0];
+            // Process volume change
+        }
     }
 };
 
-class ConnectionManager {
-private:
-    static constexpr uint8_t SCAN_INTERVAL_MS = 1349;
-    static constexpr uint8_t SCAN_WINDOW_MS = 449;
-    static constexpr uint8_t MAX_RETRY_COUNT = 3;
-
-    struct ConnectionStats {
-        uint32_t packetsReceived;
-        uint32_t packetsSent;
-        uint32_t errorCount;
-        uint32_t lastRSSI;
-        uint32_t connectionTime;
-    };
-    
-    std::map<String, ConnectionStats> connectionStats;
-
-public:
-    bool manageConnections() {
-        for (auto& device : connectedDevices) {
-            // Check connection health
-            if (!isConnectionHealthy(device.second)) {
-                handleUnhealthyConnection(&device.second);
-            }
-
-            // Update connection statistics
-            updateConnectionStats(device.first);
-        }
-
-        // Manage scanning for new devices if below MAX_CONNECTIONS
-        if (connectedDevices.size() < MAX_CONNECTIONS) {
-            startScanning();
-        }
-
-        return true;
-    }
-
-private:
-    bool isConnectionHealthy(const ConnectedDevice& device) {
-        // Implementation for connection health check
-    }
-
-    void handleUnhealthyConnection(ConnectedDevice* device) {
-        // Implementation for handling poor connections
-    }
-
-    void updateConnectionStats(const String& address) {
-        // Implementation for updating connection statistics
-    }
-};
+// Global manager instance
+BLECentralManager* centralManager = nullptr;
 
 void setup() {
     Serial.begin(115200);
+    while(!Serial) delay(10);
+    
+    if (!BLE.begin()) {
+        Serial.println("Failed to initialize BLE!");
+        while (1);
+    }
+    
     centralManager = new BLECentralManager();
     centralManager->startScanning();
 }
 
 void loop() {
-    // Handle periodic scanning and connection management
+    BLE.poll(); // Required for RTL8720DN BLE operations
     delay(100);
 }
