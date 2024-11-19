@@ -20,6 +20,10 @@
 #define VOLUME_CONTROL_POINT_CHAR_UUID  "2B7C"
 #define AUDIO_STREAM_ENDPOINT_CHAR_UUID "2BC6"
 
+// Security-related definitions
+#define MIN_KEY_SIZE 16
+#define MAX_KEY_SIZE 16
+
 // Device tracking structures
 struct ConnectedDevice {
     String name;
@@ -269,6 +273,408 @@ class VolumeControlCallback : public BLECharacteristicCallbacks {
             // Handle volume control updates
             uint8_t volume = value[0];
             // Process volume change
+        }
+    }
+};
+
+class SecurityManager {
+private:
+    enum class SecurityLevel {
+        NONE = 0,
+        UNAUTHENTICATED, // Just Works pairing
+        AUTHENTICATED,   // MITM protection
+        AUTHENTICATED_SC // MITM + Secure Connections
+    };
+
+    struct SecurityState {
+        bool encrypted;
+        bool authenticated;
+        bool bonded;
+        SecurityLevel level;
+        uint8_t keySize;
+    };
+
+    std::map<String, SecurityState> deviceSecurityStates;
+
+public:
+    SecurityManager() {
+        initializeSecurity();
+    }
+
+    bool setupDeviceSecurity(BLEClient* client, const String& address) {
+        // Set security level to require encryption and MITM protection
+        client->setEncryption(address, BLE_GAP_LE_SEC_ENCRYPT_MITM);
+        
+        // Register for security callbacks
+        client->setSecurityCallbacks(new SecurityCallbacks(this));
+        
+        return true;
+    }
+
+    void updateSecurityState(const String& address, const SecurityState& state) {
+        deviceSecurityStates[address] = state;
+    }
+
+    SecurityState getSecurityState(const String& address) {
+        if (deviceSecurityStates.find(address) != deviceSecurityStates.end()) {
+            return deviceSecurityStates[address];
+        }
+        return SecurityState{false, false, false, SecurityLevel::NONE, 0};
+    }
+
+private:
+    void initializeSecurity() {
+        // Configure BLE security settings for RTL8720DN
+        BLE.setEncryption(GAP_SECURITY_LEVEL_2);
+        
+        // Enable MITM protection
+        BLE.setAuthenticationParameter(
+            GAP_AUTHEN_SECURITY_REQUIRED,
+            GAP_AUTHEN_SECURITY_MITM | GAP_AUTHEN_SECURITY_BONDING
+        );
+        
+        // Set IO capabilities
+        BLE.setAuthenticationParameter(
+            GAP_AUTHEN_IO_CAPABILITIES,
+            GAP_IO_CAP_DISPLAY_YES_NO
+        );
+    }
+};
+
+class SecurityCallbacks : public BLESecurityCallbacks {
+private:
+    SecurityManager* securityManager;
+    
+public:
+    SecurityCallbacks(SecurityManager* manager) : securityManager(manager) {}
+
+    void onAuthenticationComplete(const String& address, uint8_t status) override {
+        if (status == GAP_SUCCESS) {
+            SecurityManager::SecurityState state;
+            state.encrypted = true;
+            state.authenticated = true;
+            state.level = SecurityManager::SecurityLevel::AUTHENTICATED_SC;
+            state.keySize = MAX_KEY_SIZE;
+            
+            securityManager->updateSecurityState(address, state);
+            
+            Serial.println("Authentication successful for device: " + address);
+        } else {
+            Serial.println("Authentication failed for device: " + address);
+        }
+    }
+
+    void onPasskeyDisplay(const String& address, uint32_t passkey) override {
+        char passkeyString[7];
+        snprintf(passkeyString, sizeof(passkeyString), "%06d", passkey);
+        Serial.println("Please enter this passkey on peer device: " + String(passkeyString));
+    }
+
+    bool onPasskeyConfirm(const String& address, uint32_t passkey) override {
+        char passkeyString[7];
+        snprintf(passkeyString, sizeof(passkeyString), "%06d", passkey);
+        Serial.println("Please confirm passkey matches on peer device: " + String(passkeyString));
+        
+        // In a real implementation, you would wait for user confirmation
+        // For this example, we auto-confirm
+        return true;
+    }
+
+    void onPasskeyInput(const String& address) override {
+        // In a real implementation, you would get input from the user
+        // For this example, we use a default passkey
+        uint32_t passkey = 123456;
+        BLE.inputPasskey(address, passkey);
+    }
+
+    void onBondingComplete(const String& address, bool success) override {
+        if (success) {
+            Serial.println("Bonding successful for device: " + address);
+            
+            // Update security state to include bonding
+            SecurityManager::SecurityState state = securityManager->getSecurityState(address);
+            state.bonded = true;
+            securityManager->updateSecurityState(address, state);
+        } else {
+            Serial.println("Bonding failed for device: " + address);
+        }
+    }
+};
+
+// Helper class for managing bonded devices
+class BondManager {
+private:
+    static const size_t MAX_BONDED_DEVICES = 10;
+    struct BondInfo {
+        String address;
+        uint8_t keys[MAX_KEY_SIZE];
+        bool valid;
+    };
+    
+    std::vector<BondInfo> bondedDevices;
+
+public:
+    bool addBondedDevice(const String& address, const uint8_t* keys) {
+        if (bondedDevices.size() >= MAX_BONDED_DEVICES) {
+            return false;
+        }
+
+        BondInfo info;
+        info.address = address;
+        memcpy(info.keys, keys, MAX_KEY_SIZE);
+        info.valid = true;
+        
+        bondedDevices.push_back(info);
+        return true;
+    }
+
+    bool removeBondedDevice(const String& address) {
+        for (auto it = bondedDevices.begin(); it != bondedDevices.end(); ++it) {
+            if (it->address == address) {
+                bondedDevices.erase(it);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool isBonded(const String& address) {
+        for (const auto& device : bondedDevices) {
+            if (device.address == address && device.valid) {
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
+// UART Service implementation
+class UARTManager {
+private:
+    static constexpr size_t UART_BUFFER_SIZE = 512;
+    BLERemoteCharacteristic* txChar;
+    BLERemoteCharacteristic* rxChar;
+    uint8_t txBuffer[UART_BUFFER_SIZE];
+    uint8_t rxBuffer[UART_BUFFER_SIZE];
+    size_t rxIndex = 0;
+
+public:
+    bool setupUARTService(BLEClient* client) {
+        BLERemoteService* uartService = client->getService(BLEUUID(UART_SERVICE_UUID));
+        if (!uartService) {
+            Serial.println("UART service not found");
+            return false;
+        }
+
+        // Get TX and RX characteristics
+        txChar = uartService->getCharacteristic(BLEUUID(UART_TX_CHAR_UUID));
+        rxChar = uartService->getCharacteristic(BLEUUID(UART_RX_CHAR_UUID));
+
+        if (!txChar || !rxChar) {
+            Serial.println("UART characteristics not found");
+            return false;
+        }
+
+        // Set up notifications for received data
+        rxChar->setNotifyCallback(new UARTCallback(this));
+        rxChar->enableNotify();
+
+        return true;
+    }
+
+    bool sendData(const uint8_t* data, size_t length) {
+        if (!txChar || length > UART_BUFFER_SIZE) {
+            return false;
+        }
+        return txChar->writeValue(data, length);
+    }
+
+    void handleReceivedData(const uint8_t* data, size_t length) {
+        if (rxIndex + length <= UART_BUFFER_SIZE) {
+            memcpy(rxBuffer + rxIndex, data, length);
+            rxIndex += length;
+            processReceivedData();
+        }
+    }
+
+private:
+    void processReceivedData() {
+        // Process received data in rxBuffer
+        // This is where you would implement your UART data handling logic
+        rxIndex = 0; // Reset buffer after processing
+    }
+};
+
+// UART notification callback
+class UARTCallback : public BLECharacteristicCallbacks {
+private:
+    UARTManager* uartManager;
+
+public:
+    UARTCallback(UARTManager* manager) : uartManager(manager) {}
+
+    void onNotify(BLECharacteristic* characteristic) {
+        uint8_t* value = characteristic->getValue();
+        uint8_t length = characteristic->getLength();
+        
+        if (length > 0) {
+            uartManager->handleReceivedData(value, length);
+        }
+    }
+};
+
+// Connection management
+class ConnectionManager {
+private:
+    static constexpr uint8_t MAX_RETRY_COUNT = 3;
+    static constexpr uint16_t CONNECTION_INTERVAL = 100; // ms
+    static constexpr uint16_t SUPERVISION_TIMEOUT = 1000; // ms
+
+    struct ConnectionParams {
+        uint16_t minInterval;
+        uint16_t maxInterval;
+        uint16_t latency;
+        uint16_t timeout;
+    };
+
+    struct ConnectionStats {
+        uint32_t packetsReceived;
+        uint32_t packetsSent;
+        uint32_t errorCount;
+        int8_t lastRssi;
+        uint32_t connectionTime;
+        uint8_t retryCount;
+    };
+
+    std::map<String, ConnectionStats> connectionStats;
+    std::map<String, ConnectionParams> connectionParams;
+
+public:
+    bool updateConnectionParameters(BLEClient* client, const String& address) {
+        ConnectionParams params = {
+            .minInterval = 8,  // 10ms (8 * 1.25ms)
+            .maxInterval = 16, // 20ms (16 * 1.25ms)
+            .latency = 0,
+            .timeout = 100     // 1s (100 * 10ms)
+        };
+
+        return client->updateConnParams(
+            params.minInterval,
+            params.maxInterval,
+            params.latency,
+            params.timeout
+        );
+    }
+
+    void updateConnectionStats(const String& address, int8_t rssi) {
+        auto& stats = connectionStats[address];
+        stats.lastRssi = rssi;
+        stats.connectionTime = millis();
+    }
+
+    bool isConnectionHealthy(const String& address) {
+        auto it = connectionStats.find(address);
+        if (it == connectionStats.end()) {
+            return false;
+        }
+
+        // Check RSSI
+        if (it->second.lastRssi < -90) {
+            return false;
+        }
+
+        // Check error rate
+        if (it->second.errorCount > 10) {
+            return false;
+        }
+
+        return true;
+    }
+
+    void handleConnectionFailure(const String& address) {
+        auto& stats = connectionStats[address];
+        stats.errorCount++;
+        
+        if (stats.errorCount > MAX_RETRY_COUNT) {
+            // Remove device from active connections
+            connectionStats.erase(address);
+            connectionParams.erase(address);
+        }
+    }
+};
+
+// Scan callback implementation
+class ScanCallback : public BLEAdvertisedDeviceCallbacks {
+private:
+    BLECentralManager* centralManager;
+
+public:
+    ScanCallback(BLECentralManager* manager) : centralManager(manager) {}
+
+    void onResult(BLEAdvertisedDevice* advertisedDevice) override {
+        // Check if device has required services
+        if (advertisedDevice->haveServiceUUID()) {
+            BLEUUID serviceUUID = advertisedDevice->getServiceUUID();
+            if (serviceUUID.equals(BLEUUID(UART_SERVICE_UUID)) ||
+                serviceUUID.equals(BLEUUID(AUDIO_SERVICE_UUID))) {
+                centralManager->handleNewConnection(advertisedDevice);
+            }
+        }
+    }
+};
+
+// Device discovery and management
+class DeviceManager {
+private:
+    std::vector<BLEAdvertisedDevice*> discoveredDevices;
+    std::map<String, uint32_t> lastSeenDevices;
+    static constexpr uint32_t DEVICE_TIMEOUT = 60000; // 60 seconds
+
+public:
+    void addDiscoveredDevice(BLEAdvertisedDevice* device) {
+        String address = device->getAddress().toString().c_str();
+        lastSeenDevices[address] = millis();
+        
+        // Update or add device
+        bool found = false;
+        for (auto& dev : discoveredDevices) {
+            if (dev->getAddress().equals(device->getAddress())) {
+                // Update existing device
+                delete dev;
+                dev = new BLEAdvertisedDevice(*device);
+                found = true;
+                break;
+            }
+        }
+        
+        if (!found) {
+            discoveredDevices.push_back(new BLEAdvertisedDevice(*device));
+        }
+    }
+
+    void cleanupOldDevices() {
+        uint32_t currentTime = millis();
+        auto it = discoveredDevices.begin();
+        
+        while (it != discoveredDevices.end()) {
+            String address = (*it)->getAddress().toString().c_str();
+            if (currentTime - lastSeenDevices[address] > DEVICE_TIMEOUT) {
+                delete *it;
+                it = discoveredDevices.erase(it);
+                lastSeenDevices.erase(address);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    std::vector<BLEAdvertisedDevice*>& getDiscoveredDevices() {
+        return discoveredDevices;
+    }
+
+    ~DeviceManager() {
+        for (auto device : discoveredDevices) {
+            delete device;
         }
     }
 };
