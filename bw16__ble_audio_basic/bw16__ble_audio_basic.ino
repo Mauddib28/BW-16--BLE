@@ -371,7 +371,7 @@ private:
 
     void discoverServices(uint8_t conn_id) {
         // Start service discovery
-        BLEDevice* device = BLE.central(conn_id);
+        BLEClient* device = BLE.addClient(conn_id);   // Note: BLEClient does have a discoverServices() function
         if (device) {
             device->discoverAttributes();
         }
