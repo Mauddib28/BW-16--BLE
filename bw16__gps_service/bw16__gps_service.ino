@@ -20,6 +20,7 @@
 ////
 #define DEBUG__BLE_SERVER  false
 #define DEBUG__GPS_DATA    false
+bool debug_flag = false;
 
 // Configured from docs; url: https://www.amebaiot.com/en/amebad-bw16-arduino-getting-started/
 static const int RXPin = 5, TXPin = 4;
@@ -396,11 +397,13 @@ void loop() {
             Serial.println("[-] GPS Disconnected - Lacking Complete Data");
         }
 
-        // Print GPS Time Data
-        print_gps_time();
+        if (debug_flag) {
+            // Print GPS Time Data
+            print_gps_time();
 
-        // Print Fix Information
-        print_gps_fix();
+            // Print Fix Information
+            print_gps_fix();
+        }
         // GPS Data is Valid
         if (gps.fix) {
             // Print GPS Location Data
