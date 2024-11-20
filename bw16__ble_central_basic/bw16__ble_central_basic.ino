@@ -15,13 +15,29 @@ const char* device_complete_name = "BLE Central Hub";
 
 #define STRING_BUF_SIZE 100
 
-BLEAdvertData foundDevice;
-BLEAdvertData targetDevice;
+// BLE Advert Data for Presenting Advertising and Services
+BLEAdvertData advert_data;      // Advert Data Structure for Containing Advertising/Beacon Info
+BLEAdvertData scan_data;        // Advert Data Structure for Containing Adv. Scan Response Info
+// BLE Advert Data for Scanning Existing BLE Devices in Proximity
+BLEAdvertData foundDevice;      // Advert Data Structure for Holding Found Device Advert Info
+BLEAdvertData targetDevice;     // Advert Data Structure for Holding Target Device Advert Info
+// BLE Client Structure for Interacting with BLE Client Devices (i.e. Devices Connecting to this Central Device)
 BLEClient* client;
+// Structures Used to Present Varioud BLE Services and Characteristics
 BLERemoteService* UartService;
 BLERemoteCharacteristic* Rx;
 BLERemoteCharacteristic* Tx;
 
+// Function for Configuring the BLE GATT Server's Advert Data
+void configure_advert(BLEAdvertData advert_data) {
+    // Clear and reconfigure the advertising data
+    advert_data.clear();
+
+    // Setup the advert data with proper flags
+    advert_data.addFlags(GAP_ADTYPE_FLAGS_GENERAL | GAP_ADTYPE_FLAGS_BREDR_NOT_SUPPORTED);
+}
+
+// Callback Function for Scanning when Devices are Found (via advertised data)
 void scanCB(T_LE_CB_DATA* p_data) {
     foundDevice.parseScanInfo(p_data);
     if (foundDevice.hasName()) {
@@ -53,6 +69,7 @@ void scanCB(T_LE_CB_DATA* p_data) {
     }
 }
 
+// Callback Function for Notification (instances?)
 void notificationCB (BLERemoteCharacteristic* chr, uint8_t* data, uint16_t len) {
     char msg[len+1] = {0};
     memcpy(msg, data, len);
@@ -62,6 +79,7 @@ void notificationCB (BLERemoteCharacteristic* chr, uint8_t* data, uint16_t len) 
     Serial.println(String(msg));
 }
 
+// Function for Setting up the RTL8720DN Device
 void setup() {
     Serial.begin(115200);
 
