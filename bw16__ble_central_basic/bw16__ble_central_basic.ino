@@ -7,7 +7,7 @@
 
 // Debugging Variables
 char emptyChar = '\0';
-bool debug_flag = true;
+bool debug_flag = false;
 bool verbose_flag = false;
 
 // BLE GATT Server Configuration Variables
@@ -234,6 +234,7 @@ void processNewClient(int8_t connection_id) {
 //// Function Definitions for Callback Functions
 // Callback Function for Scanning when Devices are Found (via advertised data)
 void scanCB(T_LE_CB_DATA* p_data) {
+    uint8_t target_addr[6] = {0x41, 0x2D, 0xAE, 0x60, 0xC9, 0x94 };   // Note: The target address must be written in little endian
     foundDevice.parseScanInfo(p_data);
     if (foundDevice.hasName()) {
         if (debug_flag) {
@@ -252,9 +253,48 @@ void scanCB(T_LE_CB_DATA* p_data) {
         // Nota Bene: This can lead to seeing devices twice, because one can see a device and not have the name
         T_LE_SCAN_INFO *scan_info = p_data->p_le_scan_info;
         if (BLEAddr(scan_info->bd_addr).str()[0] != emptyChar) {
+            // Debug found device information
             if (debug_flag) {
                 Serial.print("[+] scanCB::Device Found with Address: ");
                 Serial.println(foundDevice.getAddr().str());
+                // Testing the direct access to variables
+                //Serial.println(scan_info->bd_addr);
+                if (verbose_flag) {
+                    for (int i = 0; i < 6; i++) {
+                        Serial.print(scan_info->bd_addr[i]);
+                        Serial.print(" - ");
+                    }
+                    Serial.println();
+                    //array_print(scan_info->bd_addr);
+                    Serial.print("Searching for: ");
+                    for (int i = 0; i < 6; i++) {
+                        Serial.print(target_addr[i]);
+                        Serial.print(" = ");
+                    }
+                }
+            }
+            // Compare Addresses Byte by Byte to Confirm Target
+            //  - Note: Target BT ADDR is "94:C9:60:AE:2D:41"
+            bool found_target_flag = true;
+            for (int i = 0; i < 6; i++) {
+                // Test if the bytes match
+                bool byte_test = scan_info->bd_addr[i] == target_addr[i];
+                // Perform bitwise AND between two bools
+                found_target_flag = found_target_flag & byte_test;
+                //if (scan_info->bd_addr[i] == target_addr[i]) {
+                //    Serial.println("MATCHING BYTE");
+                //}
+                if (debug_flag & verbose_flag) {
+                    Serial.print("Found Flag Value: ");
+                    Serial.println(found_target_flag);
+                }
+            }
+            // Check if the Address is a hardcoded address we want
+            if (found_target_flag) {
+                Serial.print("[+] scanCB::Target Address Found [ ");
+                Serial.print(foundDevice.getAddr().str());
+                Serial.println(" ] ");            
+                targetDevice = foundDevice;
             }
         } else {
             if (debug_flag & verbose_flag) {
@@ -317,7 +357,11 @@ void setup() {
     // Scan for Devices in Proximity
     BLE.configScan()->startScan(2000);      // Scan for 2000 milliseconds
     Serial.print("[*] Attempting to Connect to Target Device: ");
-    Serial.println(targetDevice.getName());
+    if (targetDevice.hasName()) {
+        Serial.println(targetDevice.getName());
+    } else {
+        Serial.println(targetDevice.getAddr().str());
+    }
     // Connect to the Target Device; assuming it was seen
     BLE.configConnection()->connect(targetDevice, 2000);        // Attempt to Connect with 2000 millisecond timeout
     // Note: The .connect() attribute of BLEConnect Objcets allows for direct passing of BLEAdvertData
