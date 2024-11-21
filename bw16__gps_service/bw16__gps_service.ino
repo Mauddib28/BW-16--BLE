@@ -422,7 +422,9 @@ void loop() {
         } else {  // GPS Data is NOT Valid
             systemErrors |= ERROR_GPS_NO_FIX;
             errorStatusChar.writeData8(systemErrors);  // Changed from writeValue
-            Serial.println("[-] No GPS Fix");
+            if (debug_flag) {
+                Serial.println("[-] No GPS Fix");
+            }
         }
     }
 }
