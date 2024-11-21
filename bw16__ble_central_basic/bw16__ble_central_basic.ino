@@ -1,13 +1,18 @@
 #include "BLEDevice.h"
+#ifdef min
+// Whatever
+#else
 #include <map>
+#endif
 
 // Debugging Variables
 char emptyChar = '\0';
-bool debug_flag = false;
+bool debug_flag = true;
 bool verbose_flag = false;
 
 // BLE GATT Server Configuration Variables
 const char* device_complete_name = "BLE Central Hub";
+//String device_complete_name = String("BLE Central Hub");
 
 #define UART_SERVICE_UUID      "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -53,6 +58,8 @@ BLEUUID audioCharacteristicUUIDs[] = {
 
 
 //// BLE GATT Server Specific Definitions
+// Structure for Holding Local BLE Address
+uint8_t local_addr[6];
 // BLE Advert Data for Presenting Advertising and Services
 BLEAdvertData advert_data;      // Advert Data Structure for Containing Advertising/Beacon Info
 BLEAdvertData scan_data;        // Advert Data Structure for Containing Adv. Scan Response Info
@@ -109,15 +116,26 @@ void printConnections() {
 void configure_advert(BLEAdvertData advert_data) {
     // Clear and reconfigure the advertising data
     advert_data.clear();
+    delay(100);
 
     // Setup the advert data with proper flags
     advert_data.addFlags(GAP_ADTYPE_FLAGS_GENERAL | GAP_ADTYPE_FLAGS_BREDR_NOT_SUPPORTED);
+
+    // Add the Compelte Name to the Advert Data
+    advert_data.addCompleteName(device_complete_name);
 }
 
 // Function for Configuring the BLE GATT Server's Advanced 
 void configure_adv_scan_resp(BLEAdvertData scan_data) {
+    // Clear and reconfigure the adv. scan response data
+    scan_data.clear();
+    delay(100);
+  
     // Setup Scan Data with proper service advertising
     scan_data.addCompleteServices(BLEUUID(UART_SERVICE_UUID));    // Adding the UART Service
+
+    // Add the Complete Name to the Adv. Scan Response Data
+    scan_data.addCompleteName(device_complete_name);
 }
 
 // Function for Printing all sub-details (i.e. Services, Characteristics, Descriptors) for a BLEClient Device
@@ -261,17 +279,19 @@ void notificationCB (BLERemoteCharacteristic* chr, uint8_t* data, uint16_t len) 
 void setup() {
     Serial.begin(115200);
 
-    Serial.println("[*] Initializing BLE and Configuring Scan Call Back");
-
-    BLE.init();
-    delay(200);
-    BLE.setDeviceName(device_complete_name);
-
+    Serial.println("[*] Configuring Adertisement and Response Data");
+    advert_data.clear();
+    delay(100);
     // Prepare the Advertising Data for the BLE GATT Server
     configure_advert(advert_data);
     // Prepare the Adv. Scanning Response Advert Data for the BLE GATT Server
     configure_adv_scan_resp(scan_data);
-
+    
+    Serial.println("[*] Initializing BLE and Configuring Scan Call Back");
+    BLE.init();
+    delay(200);
+    BLE.setDeviceName(device_complete_name);
+    delay(100);
     // Configure the Advert Datas into the BLE Object
     BLE.configAdvert()->setAdvData(advert_data);
     BLE.configAdvert()->setScanRspData(scan_data);
@@ -282,7 +302,16 @@ void setup() {
     
     BLE.setScanCallback(scanCB);
     Serial.println("[*] Beginning Central");
+    // Start Central Device
     BLE.beginCentral(2);    // Set the maximum number of connections to TWO
+
+    Serial.print("[*] BLE Server Address: ");
+    BLE.getLocalAddr(local_addr);
+    for (int i = 5; i >= 0; i--) {
+        Serial.print(local_addr[i], HEX);
+        if (i > 0) Serial.print(":"); // Print colon between bytes
+    }
+    Serial.println();
     
     Serial.println("[*] Starting Scan of Devices");
     // Scan for Devices in Proximity
@@ -357,4 +386,3 @@ void loop() {
         Serial.println("[-] DEVICE NOT FOUND!");
     }
 }
-
