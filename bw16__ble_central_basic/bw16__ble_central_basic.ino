@@ -33,6 +33,25 @@ struct BLEConnectionManager {
     BLEConnectionManager() : count(0) {} // Constructor to initialize count
 };
 
+// Define Service UUIDs for Audio Capabilities
+BLEUUID audioServiceUUIDs[] = {
+    BLEUUID("0000110B-0000-1000-8000-00805F9B34FB"), // Audio Sink
+    BLEUUID("0000110A-0000-1000-8000-00805F9B34FB"), // Audio Source
+    BLEUUID("0000110C-0000-1000-8000-00805F9B34FB"), // AV Remote Control Target
+    BLEUUID("0000110E-0000-1000-8000-00805F9B34FB"), // AV Remote Control
+    BLEUUID("00001108-0000-1000-8000-00805F9B34FB"), // Headset
+    BLEUUID("0000111E-0000-1000-8000-00805F9B34FB"), // Hands-Free
+    BLEUUID("0000110D-0000-1000-8000-00805F9B34FB")  // Audio Stream
+};
+
+// Define Characteristic UUIDs for Audio Capabilities
+BLEUUID audioCharacteristicUUIDs[] = {
+    BLEUUID("00002A9D-0000-1000-8000-00805F9B34FB"), // Audio Control Point
+    BLEUUID("00002A9E-0000-1000-8000-00805F9B34FB"), // Audio Data
+    BLEUUID("00002A7D-0000-1000-8000-00805F9B34FB")  // Volume Control
+};
+
+
 //// BLE GATT Server Specific Definitions
 // BLE Advert Data for Presenting Advertising and Services
 BLEAdvertData advert_data;      // Advert Data Structure for Containing Advertising/Beacon Info
@@ -137,6 +156,40 @@ void enumerateServices(BLEClient* client, BLEAdvertData& advertData) {
         // Enumerate the Service; Note: Will have to be done via a whitelist of known UUIDS
         //  - There is NO DEFAULT PUBLIC FUNCTIONALITY for enumerating a Characteristic or later Descriptor lists
         //  - Due to public/private sectioning of the BLERemoteService's functionality
+        for (auto& audio_serv_uuid : audioServiceUUIDs) {
+            Serial.println(audio_serv_uuid.str());
+            // Check if the Current Service UUID matches a known Audio Service UUID
+            if (BLEUUID(audio_serv_uuid.str()) == uuid) {
+                Serial.print("[+] Found a Known Audio UUID of [ ");
+                Serial.print(uuid.str());
+                Serial.println(" ]");
+                // Continue to enumerate the Service's Characteristics to Look for Specific Audio Functionality
+                Serial.println("Audio Characteristic UUIDs:");
+                for (auto& audio_char_uuid : audioCharacteristicUUIDs) {
+                    Serial.println(audio_char_uuid.str());
+                    // Check to see if the Current Characteristic has the Specific Audio Functionality
+                    BLERemoteCharacteristic* characteristic = service->getCharacteristic(audio_char_uuid);
+                    // Check if a Characteristic was Returned
+                    if (characteristic != nullptr) {
+                        Serial.print("[+] Found a Known Audio Characteristic UUID of [ ");
+                        Serial.print(audio_char_uuid.str());
+                        Serial.println(" ]");
+                    } else {
+                        if (debug_flag) {
+                            Serial.print("[-] Characteristic UUID [ ");
+                            Serial.print(audio_char_uuid.str());
+                            Serial.println(" ] is NOT a Knonw Characteristic Audio UUID");
+                        }
+                    }
+                }
+            } else {
+                if (debug_flag) {
+                    Serial.print("[-] UUID [ ");
+                    Serial.print(uuid.str());
+                    Serial.println(" ] is NOT a Known Audio UUID");
+                }
+            }
+        }
     }
 }
 
@@ -282,6 +335,8 @@ void setup() {
             }
         }
     }
+
+
 }
 
 void loop() {
