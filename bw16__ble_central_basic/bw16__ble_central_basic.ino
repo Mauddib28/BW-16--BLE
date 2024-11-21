@@ -1,5 +1,5 @@
-
 #include "BLEDevice.h"
+#include <map>
 
 // Debugging Variables
 char emptyChar = '\0';
@@ -15,6 +15,25 @@ const char* device_complete_name = "BLE Central Hub";
 
 #define STRING_BUF_SIZE 100
 
+#define MAX_CONNECTIONS 10  // Define the maximum number of connections
+
+//// Structure Definitions for Bluetooth Low Energy related things
+// Structure Definition for the BLEConnection Object; tracks a connection for a given device
+struct BLEConnection {
+    BLEClient* client;       // Pointer to the BLEClient
+    BLEAdvertData advertData; // Advert data for the connection
+    bool isConnected;         // Connection status
+};
+
+// Structure to hold multiple BLE connections
+struct BLEConnectionManager {
+    BLEConnection connections[MAX_CONNECTIONS]; // Array of connections
+    int count; // Current number of active connections
+
+    BLEConnectionManager() : count(0) {} // Constructor to initialize count
+};
+
+//// BLE GATT Server Specific Definitions
 // BLE Advert Data for Presenting Advertising and Services
 BLEAdvertData advert_data;      // Advert Data Structure for Containing Advertising/Beacon Info
 BLEAdvertData scan_data;        // Advert Data Structure for Containing Adv. Scan Response Info
@@ -28,6 +47,45 @@ BLERemoteService* UartService;
 BLERemoteCharacteristic* Rx;
 BLERemoteCharacteristic* Tx;
 
+// BLE Connection Manager Declaration
+BLEConnectionManager connectionManager; // Create an instance of the connection manager
+
+//// Function Definitions for Device Connection Tracking
+// Function for Adding a Connection to the Connection Manager
+bool addConnection(BLEClient* client, BLEAdvertData advertData) {
+    if (connectionManager.count < MAX_CONNECTIONS) {
+        connectionManager.connections[connectionManager.count].client = client;
+        connectionManager.connections[connectionManager.count].advertData = advertData;
+        connectionManager.connections[connectionManager.count].isConnected = true;
+        connectionManager.count++;
+        return true; // Successfully added
+    }
+    return false; // Connection limit reached
+}
+
+// Function for Searching for a Specific Connection Based on a String Name (i.e. Device Name)
+BLEClient* findConnectionByName(const String& name) {
+    for (int i = 0; i < connectionManager.count; i++) {
+        if (connectionManager.connections[i].advertData.getName() == name) {
+            return connectionManager.connections[i].client; // Return the client if found
+        }
+    }
+    return nullptr; // Not found
+}
+
+// Function for Printing the Current Active Connections
+void printConnections() {
+    Serial.println("Active Connections:");
+    for (int i = 0; i < connectionManager.count; i++) {
+        Serial.print("Connection ");
+        Serial.print(i);
+        Serial.print(": ");
+        Serial.println(connectionManager.connections[i].advertData.getName());
+    }
+}
+
+
+//// Function Definitions for BLE GATT Server
 // Function for Configuring the BLE GATT Server's Advert Data
 void configure_advert(BLEAdvertData advert_data) {
     // Clear and reconfigure the advertising data
@@ -37,6 +95,72 @@ void configure_advert(BLEAdvertData advert_data) {
     advert_data.addFlags(GAP_ADTYPE_FLAGS_GENERAL | GAP_ADTYPE_FLAGS_BREDR_NOT_SUPPORTED);
 }
 
+// Function for Configuring the BLE GATT Server's Advanced 
+void configure_adv_scan_resp(BLEAdvertData scan_data) {
+    // Setup Scan Data with proper service advertising
+    scan_data.addCompleteServices(BLEUUID(UART_SERVICE_UUID));    // Adding the UART Service
+}
+
+// Function for Printing all sub-details (i.e. Services, Characteristics, Descriptors) for a BLEClient Device
+void printDeviceDetails(BLEClient* client) {
+    // Call the printServices() function of the BLEClient objcet
+    client->printServices();
+}
+
+// Function for Enumerating Services of a Provided BLEClient
+void enumerateServices(BLEClient* client, BLEAdvertData& advertData) {
+    if (client == nullptr) {
+        Serial.println("Client is null, cannot enumerate services.");
+        return;
+    }
+
+    // Discover services on the client
+    client->discoverServices();
+    Serial.println("Enumerating services...");
+
+    // Wait until service discovery is done
+    do {
+        Serial.print(".");
+        delay(1000);
+    } while (!(client->discoveryDone()));   // Continue to wait until the Service Discovery Status becomes True
+    Serial.println();
+
+    // Obtain the List of Services Related to the Client Device
+    BLEUUID* services_list = advertData.getServiceList();
+    int serviceCount = advertData.getServiceCount();
+
+    // Loop through the Service List
+    for (int i = 0; i < serviceCount; i++) {
+        BLEUUID uuid = services_list[i];    // Obtain the current Service UUID
+        BLERemoteService* service = client->getService(uuid);   // Get the Service UUID's information from the BLEClient
+
+        // Enumerate the Service; Note: Will have to be done via a whitelist of known UUIDS
+        //  - There is NO DEFAULT PUBLIC FUNCTIONALITY for enumerating a Characteristic or later Descriptor lists
+        //  - Due to public/private sectioning of the BLERemoteService's functionality
+    }
+}
+
+// Function to Enumerate a Provided BLEClient Device
+void enumerateDevice(BLEClient* client, BLEAdvertData& advertData) {
+    // Enumerate the Services (and recursive Characteristics + Descriptors)
+    enumerateServices(client, advertData);
+}
+
+// Function for Processing a New Client Device for the BLE GATT Server's Tracking
+void processNewClient(int8_t connection_id) {
+    // Perform initialization for the New Client
+    BLE.configClient();
+    // Create the New Client Object based on the Device Connection ID
+    BLEClient* new_client = BLE.addClient(connection_id);
+    // Discover/Enumerate information about the New Device
+
+    // Perform Connection-Type (e.g. Trusted, Bonded) Examination of the New Client
+
+    // Incorporate the New Client device into the appropriate structures for tracking the new client device
+    //  - Note: The purpose of this is to provide ease of search, enumeration, association, and recall for later BLE GATT Server functionality
+}
+
+//// Function Definitions for Callback Functions
 // Callback Function for Scanning when Devices are Found (via advertised data)
 void scanCB(T_LE_CB_DATA* p_data) {
     foundDevice.parseScanInfo(p_data);
@@ -79,6 +203,7 @@ void notificationCB (BLERemoteCharacteristic* chr, uint8_t* data, uint16_t len) 
     Serial.println(String(msg));
 }
 
+//// -=[MAIN CODE FUNCTIONS]=-
 // Function for Setting up the RTL8720DN Device
 void setup() {
     Serial.begin(115200);
@@ -89,44 +214,68 @@ void setup() {
     delay(200);
     BLE.setDeviceName(device_complete_name);
 
-    // Clear any previous data; requires inclusion of advert_data
-    
+    // Prepare the Advertising Data for the BLE GATT Server
+    configure_advert(advert_data);
+    // Prepare the Adv. Scanning Response Advert Data for the BLE GATT Server
+    configure_adv_scan_resp(scan_data);
+
+    // Configure the Advert Datas into the BLE Object
+    BLE.configAdvert()->setAdvData(advert_data);
+    BLE.configAdvert()->setScanRspData(scan_data);
+
+    // Configure the BLE Server before adding services
+    BLE.configServer(1);    // Note: The reason for the 1 is that current there is only ONE service
+    delay(100);
     
     BLE.setScanCallback(scanCB);
     Serial.println("[*] Beginning Central");
     BLE.beginCentral(2);    // Set the maximum number of connections to TWO
     
     Serial.println("[*] Starting Scan of Devices");
-    BLE.configScan()->startScan(2000);
+    // Scan for Devices in Proximity
+    BLE.configScan()->startScan(2000);      // Scan for 2000 milliseconds
     Serial.print("[*] Attempting to Connect to Target Device: ");
     Serial.println(targetDevice.getName());
-    BLE.configConnection()->connect(targetDevice, 2000);
+    // Connect to the Target Device; assuming it was seen
+    BLE.configConnection()->connect(targetDevice, 2000);        // Attempt to Connect with 2000 millisecond timeout
+    // Note: The .connect() attribute of BLEConnect Objcets allows for direct passing of BLEAdvertData
     Serial.println("[*] Time wait of 2000 milliseconds");
     delay(2000);
+    // Create a connection ID from the established aforementioned connection
     int8_t connID = BLE.configConnection()->getConnId(targetDevice);
+    // Check if a connection ID was returned by the above function calls
     if (!BLE.connected(connID)) {
         Serial.println("BLE not connected");
     } else {
+        // Initialize a BLEClient object and register default client callback; based on internal default?
         BLE.configClient();
+        // Create and Return a new Client Connection by configuring a client ID and connection ID
         client = BLE.addClient(connID);
+        // Obtain Discovering of Services on the Connected Device
         client->discoverServices();
         Serial.print("Discovering services of connected device");
         do {
             Serial.print(".");
             delay(1000);
-        } while (!(client->discoveryDone()));
+        } while (!(client->discoveryDone()));   // Continue to wait until the Service Discovery Status becomes True
         Serial.println();
 
+        // Search and Return the specfic UART_SERVICE_UUID
         UartService = client->getService(UART_SERVICE_UUID);
+        // Check if the UART Service was found
         if (UartService != nullptr) {
+            // Search and Return the specific CHARACTERISTIC_UUID_TX
             Tx = UartService->getCharacteristic(CHARACTERISTIC_UUID_TX);
+            // Check if the TX Characteristic was found
             if (Tx != nullptr) {
                 Serial.println("TX characteristic found");
                 Tx->setBufferLen(STRING_BUF_SIZE);
                 Tx->setNotifyCallback(notificationCB);
                 Tx->enableNotifyIndicate();
             }
+            // Search and Return the specific CHARACTERISTIC_UUID_RX
             Rx = UartService->getCharacteristic(CHARACTERISTIC_UUID_RX);
+            // Check if the RX Characteristic was found
             if (Rx != nullptr) {
                 Serial.println("RX characteristic found");
                 Rx->setBufferLen(STRING_BUF_SIZE);
@@ -153,3 +302,4 @@ void loop() {
         Serial.println("[-] DEVICE NOT FOUND!");
     }
 }
+
