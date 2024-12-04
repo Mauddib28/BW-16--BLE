@@ -177,7 +177,8 @@ void enumerateServices(BLEClient* client, BLEAdvertData& advertData) {
         for (auto& audio_serv_uuid : audioServiceUUIDs) {
             Serial.println(audio_serv_uuid.str());
             // Check if the Current Service UUID matches a known Audio Service UUID
-            if (BLEUUID(audio_serv_uuid.str()) == uuid) {
+            #if (BLEUUID(audio_serv_uuid.str()) == uuid) {							# TODO: Redundant since audio_serv_uuid should be a BLEUUID object??
+	    if (audio_serv_uuid == uuid) {
                 Serial.print("[+] Found a Known Audio UUID of [ ");
                 Serial.print(uuid.str());
                 Serial.println(" ]");
