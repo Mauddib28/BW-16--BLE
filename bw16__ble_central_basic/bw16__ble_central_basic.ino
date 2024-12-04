@@ -9,6 +9,17 @@
 char emptyChar = '\0';
 bool debug_flag = false;
 bool verbose_flag = false;
+// Forcing Bluetooth Debugging value?
+#ifdef BTDEBUG
+#undef BTDEBUG
+#endif
+#define BTDEBUG 1;   // Not sure this actually does anything....
+
+// Timing Variables
+uint32_t millis_timer;    // Variable for Tracking Time in milliseconds; for NON-BLOCKING timing
+
+// Target Tracking Variables
+bool target_identified = false;
 
 // BLE GATT Server Configuration Variables
 const char* device_complete_name = "BLE Central Hub";
@@ -60,6 +71,7 @@ BLEUUID audioCharacteristicUUIDs[] = {
 //// BLE GATT Server Specific Definitions
 // Structure for Holding Local BLE Address
 uint8_t local_addr[6];
+int8_t target_conn_id;
 // BLE Advert Data for Presenting Advertising and Services
 BLEAdvertData advert_data;      // Advert Data Structure for Containing Advertising/Beacon Info
 BLEAdvertData scan_data;        // Advert Data Structure for Containing Adv. Scan Response Info
@@ -147,13 +159,20 @@ void printDeviceDetails(BLEClient* client) {
 // Function for Enumerating Services of a Provided BLEClient
 void enumerateServices(BLEClient* client, BLEAdvertData& advertData) {
     if (client == nullptr) {
-        Serial.println("Client is null, cannot enumerate services.");
+        Serial.println("[-] enumerateServices::Client is null, cannot enumerate services.");
         return;
     }
 
-    // Discover services on the client
-    client->discoverServices();
-    Serial.println("Enumerating services...");
+    // Check is a discovery has already been done?
+    if (!(client->discoveryDone())) {
+        // Discover services on the client
+        client->discoverServices();
+    } else {
+        if (debug_flag) {
+            Serial.println("[!] enumerateServices::Discovery of Services Already Performed");
+        }
+    }
+    Serial.println("[*] enumerateServices::Enumerating services...");
 
     // Wait until service discovery is done
     do {
@@ -175,7 +194,12 @@ void enumerateServices(BLEClient* client, BLEAdvertData& advertData) {
         //  - There is NO DEFAULT PUBLIC FUNCTIONALITY for enumerating a Characteristic or later Descriptor lists
         //  - Due to public/private sectioning of the BLERemoteService's functionality
         for (auto& audio_serv_uuid : audioServiceUUIDs) {
-            Serial.println(audio_serv_uuid.str());
+            if (!(debug_flag & verbose_flag)) {
+                Serial.print("[*] enumerateServices::Comparing UUID [ ");
+                Serial.print(uuid.str());
+                Serial.print(" ] against the UUID: ");
+                Serial.println(audio_serv_uuid.str());
+            }
             // Check if the Current Service UUID matches a known Audio Service UUID
             #if (BLEUUID(audio_serv_uuid.str()) == uuid) {							# TODO: Redundant since audio_serv_uuid should be a BLEUUID object??
 	    if (audio_serv_uuid == uuid) {
@@ -190,12 +214,12 @@ void enumerateServices(BLEClient* client, BLEAdvertData& advertData) {
                     BLERemoteCharacteristic* characteristic = service->getCharacteristic(audio_char_uuid);
                     // Check if a Characteristic was Returned
                     if (characteristic != nullptr) {
-                        Serial.print("[+] Found a Known Audio Characteristic UUID of [ ");
+                        Serial.print("[+] enumerateServices::Found a Known Audio Characteristic UUID of [ ");
                         Serial.print(audio_char_uuid.str());
                         Serial.println(" ]");
                     } else {
                         if (debug_flag) {
-                            Serial.print("[-] Characteristic UUID [ ");
+                            Serial.print("[-] enumerateServices::Characteristic UUID [ ");
                             Serial.print(audio_char_uuid.str());
                             Serial.println(" ] is NOT a Knonw Characteristic Audio UUID");
                         }
@@ -203,7 +227,7 @@ void enumerateServices(BLEClient* client, BLEAdvertData& advertData) {
                 }
             } else {
                 if (debug_flag) {
-                    Serial.print("[-] UUID [ ");
+                    Serial.print("[-] enumerateServices::UUID [ ");
                     Serial.print(uuid.str());
                     Serial.println(" ] is NOT a Known Audio UUID");
                 }
@@ -218,18 +242,128 @@ void enumerateDevice(BLEClient* client, BLEAdvertData& advertData) {
     enumerateServices(client, advertData);
 }
 
+// Function to Time out a Wait Time
+void timer_wait(uint16_t time_to_wait_ms) {
+    millis_timer = millis();
+    do {
+        if (debug_flag) {
+            Serial.print(".");
+        }
+    } while ((millis() - millis_timer) > time_to_wait_ms);
+    //Serial.println();
+}
+
+// Function to Create a Connection to a Device
+int8_t connect_to_target(BLEDevice& ble_device, BLEAdvertData& ble_target) {
+    int timeout_wait = 2000;    // in milliseconds
+    Serial.println("[*] connect_to_target::Connecting to Target Device");
+    //delay(100);
+    ble_device.configConnection()->connect(ble_target, timeout_wait);        // Attempt to Connect with 2000 millisecond timeout
+    // Note: The .connect() attribute of BLEConnect Objcets allows for direct passing of BLEAdvertData
+    Serial.print("[*] connect_to_target::Time wait of ");
+    Serial.print(timeout_wait);
+    Serial.print(" milliseconds");
+    //delay(timeout_wait);    // Note: For some reason this causes a hang....
+    timer_wait(timeout_wait); Serial.println();
+    Serial.println("[*] connect_to_target::Obtaining the Connection ID");
+    //delay(100);
+    // Create a connection ID from the established aforementioned connection
+    int8_t connID = ble_device.configConnection()->getConnId(ble_target);
+    if (!debug_flag) {
+        Serial.print("[*] connect_to_target::Connection ID: ");
+        Serial.println(connID);
+    }
+    // Attempt to wait until the device is connected?
+    Serial.print("[*] connect_to_target::Confirming connection to target");
+    //do {
+        //Serial.print(".");
+        //delay(1000);
+        //timer_wait(1000);
+    //} while (!ble_device.connected(connID));
+    Serial.println();
+
+    if (!ble_device.connected(connID)) {
+        Serial.println("[-] connect_to_target::BLE not connected");
+    } else {
+        Serial.println("[+] connect_to_target::BLE connected");
+
+        Serial.println("[*] connect_to_target::Processing Target Device");
+        // Process the New Client from the New Connection
+        client = processNewClient(ble_device, ble_target, connID);
+
+        Serial.println("[*] connect_to_target::Enumerating the Target Device");
+        // Enumerate the New Client
+        enumerateDevice(client, ble_target);
+
+        Serial.println("[*] connect_to_target::Searching for Ancient Artifacts");
+        // Search and Return the specfic UART_SERVICE_UUID
+        UartService = client->getService(UART_SERVICE_UUID);
+        // Check if the UART Service was found
+        if (UartService != nullptr) {
+            // Search and Return the specific CHARACTERISTIC_UUID_TX
+            Tx = UartService->getCharacteristic(CHARACTERISTIC_UUID_TX);
+            // Check if the TX Characteristic was found
+            if (Tx != nullptr) {
+                Serial.println("TX characteristic found");
+                Tx->setBufferLen(STRING_BUF_SIZE);
+                Tx->setNotifyCallback(notificationCB);
+                Tx->enableNotifyIndicate();
+            }
+            // Search and Return the specific CHARACTERISTIC_UUID_RX
+            Rx = UartService->getCharacteristic(CHARACTERISTIC_UUID_RX);
+            // Check if the RX Characteristic was found
+            if (Rx != nullptr) {
+                Serial.println("RX characteristic found");
+                Rx->setBufferLen(STRING_BUF_SIZE);
+            }
+        }
+    }
+
+    Serial.println("[*] connect_to_target::Returning the Connection ID");
+    // Return the connection ID
+    return connID;
+}
+
+// Function for Scanning for Devices; Note: Moving this here might be breaking the central BLE CPU threa/operation
+void scan_for_target_device(BLEDevice ble_device, BLEAdvertData target_device) {
+    // Scan for Devices in Proximity
+    ble_device.configScan()->startScan(2000);      // Scan for 2000 milliseconds
+    Serial.print("[*] Attempting to Connect to Target Device: ");
+    if (target_device.hasName()) {
+        Serial.println(target_device.getName());
+    } else {
+        Serial.println(target_device.getAddr().str());
+    }
+    // Connect to the Target Device; assuming it was seen
+    int8_t connID = connect_to_target(ble_device, target_device);
+}
+
 // Function for Processing a New Client Device for the BLE GATT Server's Tracking
-void processNewClient(int8_t connection_id) {
+BLEClient* processNewClient(BLEDevice ble_device, BLEAdvertData advert_data, int8_t connection_id) {
+    int discovery_wait_time = 1000;
     // Perform initialization for the New Client
-    BLE.configClient();
+    ble_device.configClient();
     // Create the New Client Object based on the Device Connection ID
-    BLEClient* new_client = BLE.addClient(connection_id);
+    BLEClient* new_client = ble_device.addClient(connection_id);
     // Discover/Enumerate information about the New Device
 
+    enumerateDevice(new_client, advert_data);
+    
+    new_client->discoverServices();
+    Serial.print("[*] processNewClient::Discovering services of the connected device");
+    // Wait until the Services are Resolved
+    do {
+        Serial.print(".");
+        //delay(discovery_wait_time);
+        timer_wait(discovery_wait_time);
+    } while (!(new_client->discoveryDone()));   // Continue to wait until the Service Discovery Status becomes True
+    Serial.println();
     // Perform Connection-Type (e.g. Trusted, Bonded) Examination of the New Client
 
     // Incorporate the New Client device into the appropriate structures for tracking the new client device
     //  - Note: The purpose of this is to provide ease of search, enumeration, association, and recall for later BLE GATT Server functionality
+
+    return new_client;
 }
 
 //// Function Definitions for Callback Functions
@@ -296,11 +430,13 @@ void scanCB(T_LE_CB_DATA* p_data) {
                 Serial.print(foundDevice.getAddr().str());
                 Serial.println(" ] ");            
                 targetDevice = foundDevice;
+                target_identified = true;
             }
         } else {
             if (debug_flag & verbose_flag) {
                 Serial.println("[-] scanCB::False Positive for Device Detection"); 
             }
+            target_identified = false;
         }
     }
 }
@@ -354,63 +490,83 @@ void setup() {
     }
     Serial.println();
     
-    Serial.println("[*] Starting Scan of Devices");
+    Serial.println("[*] Setup::Starting Scan of Devices");
+    //scan_for_target_device(BLE, targetDevice);
     // Scan for Devices in Proximity
     BLE.configScan()->startScan(2000);      // Scan for 2000 milliseconds
-    Serial.print("[*] Attempting to Connect to Target Device: ");
-    if (targetDevice.hasName()) {
-        Serial.println(targetDevice.getName());
-    } else {
-        Serial.println(targetDevice.getAddr().str());
-    }
-    // Connect to the Target Device; assuming it was seen
-    BLE.configConnection()->connect(targetDevice, 2000);        // Attempt to Connect with 2000 millisecond timeout
-    // Note: The .connect() attribute of BLEConnect Objcets allows for direct passing of BLEAdvertData
-    Serial.println("[*] Time wait of 2000 milliseconds");
-    delay(2000);
-    // Create a connection ID from the established aforementioned connection
-    int8_t connID = BLE.configConnection()->getConnId(targetDevice);
-    // Check if a connection ID was returned by the above function calls
-    if (!BLE.connected(connID)) {
-        Serial.println("BLE not connected");
-    } else {
-        // Initialize a BLEClient object and register default client callback; based on internal default?
-        BLE.configClient();
-        // Create and Return a new Client Connection by configuring a client ID and connection ID
-        client = BLE.addClient(connID);
-        // Obtain Discovering of Services on the Connected Device
-        client->discoverServices();
-        Serial.print("Discovering services of connected device");
-        do {
-            Serial.print(".");
-            delay(1000);
-        } while (!(client->discoveryDone()));   // Continue to wait until the Service Discovery Status becomes True
-        Serial.println();
-
-        // Search and Return the specfic UART_SERVICE_UUID
-        UartService = client->getService(UART_SERVICE_UUID);
-        // Check if the UART Service was found
-        if (UartService != nullptr) {
-            // Search and Return the specific CHARACTERISTIC_UUID_TX
-            Tx = UartService->getCharacteristic(CHARACTERISTIC_UUID_TX);
-            // Check if the TX Characteristic was found
-            if (Tx != nullptr) {
-                Serial.println("TX characteristic found");
-                Tx->setBufferLen(STRING_BUF_SIZE);
-                Tx->setNotifyCallback(notificationCB);
-                Tx->enableNotifyIndicate();
-            }
-            // Search and Return the specific CHARACTERISTIC_UUID_RX
-            Rx = UartService->getCharacteristic(CHARACTERISTIC_UUID_RX);
-            // Check if the RX Characteristic was found
-            if (Rx != nullptr) {
-                Serial.println("RX characteristic found");
-                Rx->setBufferLen(STRING_BUF_SIZE);
-            }
+    //delay(2000);
+    timer_wait(2000);
+    if (target_identified) {
+        Serial.print("[*] Setup::Attempting to Connect to Target Device: ");
+        if (targetDevice.hasName()) {
+            Serial.println(targetDevice.getName());
+        } else {
+            Serial.println(targetDevice.getAddr().str());
         }
+        // Connect to the Target Device; assuming it was seen
+        //int8_t connID = connect_to_target(BLE, targetDevice);
+        target_conn_id = connect_to_target(BLE, targetDevice);
+        // Debug returned Connection ID
+        Serial.print("[*] Setup::Returned Connection ID of ");
+        Serial.println(target_conn_id);
+
+//        int timeout_wait = 2000;    // in milliseconds
+//        Serial.println("[*] connect_to_target::Connecting to Target Device");
+//        delay(100);
+//        BLE.configConnection()->connect(targetDevice, timeout_wait);        // Attempt to Connect with 2000 millisecond timeout
+//        // Note: The .connect() attribute of BLEConnect Objcets allows for direct passing of BLEAdvertData
+//        Serial.print("[*] connect_to_target::Time wait of ");
+//        Serial.print(2000);   //timeout_wait);
+//        Serial.println(" milliseconds");
+//        delay(timeout_wait);    // Note: For some reason this causes a hang....
+//        Serial.println("[*] connect_to_target::Obtaining the Connection ID");
+//        delay(100);
+//        // Create a connection ID from the established aforementioned connection
+//        int8_t connID = BLE.configConnection()->getConnId(targetDevice);
+//        if (!debug_flag) {
+//            Serial.print("[*] Connection ID: ");
+//            Serial.println(connID);
+//        }
+//
+//        if (!BLE.connected(connID)) {
+//            Serial.println("BLE not connected");
+//        } else {
+//            Serial.println("BLE connected");
+//
+//            Serial.println("[*] Processing Target Device");
+//            // Process the New Client from the New Connection
+//            client = processNewClient(BLE, targetDevice, connID);
+//            
+//            Serial.println("[*] Enumerating the Target Device");
+//            // Enumerate the New Client
+//            enumerateDevice(client, targetDevice);
+//
+//            Serial.println("[*] Searching for Ancient Artifacts");
+//            // Search and Return the specfic UART_SERVICE_UUID
+//            UartService = client->getService(UART_SERVICE_UUID);
+//            // Check if the UART Service was found
+//            if (UartService != nullptr) {
+//                // Search and Return the specific CHARACTERISTIC_UUID_TX
+//                Tx = UartService->getCharacteristic(CHARACTERISTIC_UUID_TX);
+//                // Check if the TX Characteristic was found
+//                if (Tx != nullptr) {
+//                    Serial.println("TX characteristic found");
+//                    Tx->setBufferLen(STRING_BUF_SIZE);
+//                    Tx->setNotifyCallback(notificationCB);
+//                    Tx->enableNotifyIndicate();
+//                }
+//                // Search and Return the specific CHARACTERISTIC_UUID_RX
+//                Rx = UartService->getCharacteristic(CHARACTERISTIC_UUID_RX);
+//                // Check if the RX Characteristic was found
+//                if (Rx != nullptr) {
+//                    Serial.println("RX characteristic found");
+//                    Rx->setBufferLen(STRING_BUF_SIZE);
+//                }
+//            }
+//        }
+    } else {
+        Serial.println("[-] Target Device NOT identified during setup");
     }
-
-
 }
 
 void loop() {
@@ -419,9 +575,44 @@ void loop() {
     }
     delay(100);
     // Testing Repeated Scans
-    delay(2000);
+    //delay(2000);
+    timer_wait(2000);
     // Try another scan
-    BLE.configScan()->startScan(2000);
+    //BLE.configScan()->startScan(2000);
+    //  - Note: The scanning below leverages the function calls, where setup has all the code written within the same function
+    //    -> Reason: BLE operation is.... ethemeral....
+    if (target_identified) {
+        if (!BLE.connected(target_conn_id)) {
+            Serial.print("[-] Loop::Device Connection ID [ ");
+            Serial.print(target_conn_id);
+            Serial.println(" ] is NOT connected.... Searching for Target Device");
+            // Re-attempt the scanning process
+            Serial.println("[*] Loop::Starting Scan of Devices");
+            //scan_for_target_device(BLE, targetDevice);
+            // Scan for Devices in Proximity
+            BLE.configScan()->startScan(2000);      // Scan for 2000 milliseconds
+            Serial.print("[*] Loop::Attempting to Connect to Target Device: ");
+            if (targetDevice.hasName()) {
+                Serial.println(targetDevice.getName());
+            } else {
+                Serial.println(targetDevice.getAddr().str());
+            }
+            // Connect to the Target Device; assuming it was seen
+            //int8_t connID = connect_to_target(BLE, targetDevice);
+            target_conn_id = connect_to_target(BLE, targetDevice);
+            // Debug returned Connection ID
+            Serial.print("[*] Loop::Returned Connection ID of ");
+            Serial.println(target_conn_id);
+        } else {
+            Serial.print("[*] Loop::Device Connection ID [ ");
+            Serial.print(target_conn_id);
+            Serial.println(" ] is connected");
+        }
+    } else {
+        Serial.println("[-] Loop::Target has NOT been identified");
+        // Rescan
+        BLE.configScan()->startScan(2000);      // Scan for 2000 milliseconds
+    }
 
     // Test to see if the target device was found
     //  - Note: The DEFAULT for the Advert Data Name is "", HENCE the .hasName() check for validity
