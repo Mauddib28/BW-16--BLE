@@ -29,7 +29,7 @@ bool notify = false;
 
 void readCB (BLECharacteristic* chr, uint8_t connID) {
     Serial.print("Characteristic ");
-    Serial.print(chr->getUUID().str());
+    //Serial.print(chr->getUUID().str());   // Failing when read occurs????
     Serial.print(" read by connection ");
     Serial.println(connID);
 }
