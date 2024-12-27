@@ -32,6 +32,8 @@ void readCB (BLECharacteristic* chr, uint8_t connID) {
     //Serial.print(chr->getUUID().str());   // Failing when read occurs????
     Serial.print(" read by connection ");
     Serial.println(connID);
+    // Writing an Update to the Characteristic Buffer
+    chr->writeString("Hello There!");
 }
 
 void writeCB (BLECharacteristic* chr, uint8_t connID) {
@@ -77,7 +79,7 @@ void notifCB(BLECharacteristic* chr, uint8_t connID, uint16_t cccd) {
         Serial.print("Notifications disabled on Characteristic");
         notify = false;
     }
-    Serial.print(chr->getUUID().str());
+    //Serial.print(chr->getUUID().str());     //  <----- Causes a [vApplicationStackOverflowHook] STACK OVERFLOW - TaskName(BLE_Perip)
     Serial.print(" for connection");
     Serial.println(connID);
 }
@@ -127,8 +129,9 @@ void loop() {
     //Serial.print(".");
     if (Serial.available()) {
         Tx.writeString(Serial.readString());
-        if (BLE.connected(0) && notify) {
+        if (BLE.connected(0) && notify) {   // Nota Bene: The notify message is ONLY sent when a read occurs, NOT when a write happens
             Tx.notify(0);
+            Serial.println("Notify!");
         }
     }
     delay(100);		// Delay Time
